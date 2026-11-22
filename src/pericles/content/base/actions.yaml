@@ -1,0 +1,8 @@
+actions:
+  - {id: gather_berries, duration_ticks: 30, outputs: {berries: 3}, skill: foraging, location: {node: berry_bush}, tags: [labour]}
+  - {id: fell_tree, duration_ticks: 60, outputs: {wood: 2}, skill: woodcutting, location: {node: tree}, tags: [labour]}
+  - {id: quarry_stone, duration_ticks: 90, outputs: {stone: 2}, skill: masonry, location: {node: boulder}, tags: [labour]}
+  - {id: mine_iron, duration_ticks: 120, outputs: {iron_ore: 1}, skill: mining, location: {node: iron_deposit}, tags: [labour]}
+  - {id: mine_gold, duration_ticks: 150, outputs: {gold_ore: 1}, skill: mining, location: {node: gold_deposit}, tags: [labour]}
+  - {id: catch_fish, duration_ticks: 60, outputs: {fish: 1}, skill: fishing, location: {node: fish_shoal}, tags: [labour]}
+  - {id: hunt, duration_ticks: 120, outputs: {meat: 4, hide: 1}, skill: hunting, location: {node: game}, tags: [labour]}

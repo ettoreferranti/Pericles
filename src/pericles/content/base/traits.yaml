@@ -1,0 +1,10 @@
+traits:
+  - {id: greedy, description: "Wants to own more than others."}
+  - {id: rebellious, description: "Distrusts rules and authority."}
+  - {id: dutiful, description: "Feels bound by agreements and rules."}
+  - {id: altruistic, description: "Puts others' needs before their own."}
+  - {id: fearful, description: "Avoids risk and conflict."}
+  - id: industrious
+    description: "Works harder and faster than most."
+    modifiers:
+      - {target: {kind: action, tag: labour}, attribute: work_speed, op: mul, value: 1.1}

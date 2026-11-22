@@ -1,7 +1,7 @@
 # SIM: Simulation World
 
 ### REQ-SIM-001: Seeded map generation
-Must · M1 · Accepted
+Must · M1 · Implemented
 The engine generates a tile map from a seed and map parameters (size, terrain proportions).
 - AC1: The same seed and parameters produce an identical map (equal hash).
 - AC2: Different seeds produce different maps (with overwhelming probability).
@@ -9,7 +9,7 @@ The engine generates a tile map from a seed and map parameters (size, terrain pr
 - AC4: All walkable tiles of the starting area are mutually reachable.
 
 ### REQ-SIM-002: Deterministic tick loop
-Must · M1 · Accepted
+Must · M1 · Implemented
 The engine advances by `step(state, intents, rng) → (state', events)`.
 - AC1: Identical state, intents and RNG seed yield identical `state'` and events.
 - AC2: Intents submitted in any order within a tick are resolved in a seeded order, so the outcome does not depend on submission order.
@@ -27,7 +27,7 @@ Must · M1 · Accepted
 - AC3: Water and buildings without an entrance are not walkable.
 
 ### REQ-SIM-005: Content packs and registry
-Must · M1 · Accepted
+Must · M1 · Implemented
 Resources, items, actions, recipes, buildings, technologies and traits are loaded from YAML content packs.
 - AC1: A pack is validated against a schema. Invalid packs are rejected with a message naming the file, path and problem.
 - AC2: Referential integrity: every referenced id exists. Dangling references are rejected.
@@ -35,7 +35,7 @@ Resources, items, actions, recipes, buildings, technologies and traits are loade
 - AC4: The engine contains no hard-coded building, recipe or resource ids, except where the base pack is loaded in tests.
 
 ### REQ-SIM-006: Modifier system
-Must · M1 · Accepted
+Must · M1 · Implemented
 A modifier is `(selector, attribute, op ∈ {add, mul, set}, value, scope, source)`.
 - AC1: Modifiers apply to actions, recipes, buildings, needs or yields that match their selector.
 - AC2: The stacking order is deterministic: all `set`, then all `add`, then all `mul`. This is documented and tested.

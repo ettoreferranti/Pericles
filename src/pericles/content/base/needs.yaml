@@ -1,0 +1,4 @@
+needs:
+  - {id: hunger, rate_per_hour: 4.0, critical: 100}
+  - {id: fatigue, rate_per_hour: 6.0, critical: 100}
+  - {id: cold, rate_per_hour: 0.0, critical: 100}

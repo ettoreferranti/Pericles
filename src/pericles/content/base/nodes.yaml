@@ -1,0 +1,8 @@
+nodes:
+  - {id: berry_bush, yields: berries, terrains: [grass, fertile_soil], density: 0.03, stock: 20, regrowth_per_day: 4}
+  - {id: tree, yields: wood, terrains: [forest], density: 0.5, stock: 10, regrowth_per_day: 0.2}
+  - {id: boulder, yields: stone, terrains: [rock], density: 0.3, stock: 30}
+  - {id: iron_deposit, yields: iron_ore, terrains: [iron_vein], density: 0.6, stock: 50}
+  - {id: gold_deposit, yields: gold_ore, terrains: [gold_vein], density: 0.6, stock: 25}
+  - {id: fish_shoal, yields: fish, terrains: [water], density: 0.02, stock: 40, regrowth_per_day: 5}
+  - {id: game, yields: meat, terrains: [forest, grass], density: 0.005, stock: 3, regrowth_per_day: 0.5}
