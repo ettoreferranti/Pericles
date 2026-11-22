@@ -111,5 +111,5 @@ def test_sun_bounds_may_touch_day_edges() -> None:
 
 @pytest.mark.req("REQ-SIM-003")
 def test_negative_tick_is_rejected() -> None:
-    with pytest.raises(ValueError, match="^tick must be non-negative$"):
+    with pytest.raises(ValueError, match=r"^tick must be non-negative$"):
         Calendar(seasons=SEASONS).time_of(-1)
