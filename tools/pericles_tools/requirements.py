@@ -7,9 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 HEADING = re.compile(r"^### (REQ-[A-Z]+-\d{3}): (.+?)\s*$")
-META = re.compile(
-    r"^(Must|Should|Could) · (M\d+) · (Proposed|Accepted|Implemented|Withdrawn)\s*$"
-)
+META = re.compile(r"^(Must|Should|Could) · (M\d+) · (Proposed|Accepted|Implemented|Withdrawn)\s*$")
 CRITERION = re.compile(r"^- (AC\d+): (.+?)\s*$")
 MILESTONE_ROW = re.compile(r"^\|\s*(M\d+)\s*\|\s*(.+?)\s*\|\s*(yes|no)\s*\|\s*$")
 SKIP_FILES = frozenset({"README.md", "milestones.md", "traceability.md"})
