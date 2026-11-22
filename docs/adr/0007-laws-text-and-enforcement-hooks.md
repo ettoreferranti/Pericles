@@ -1,6 +1,6 @@
 # ADR-0007: Laws as natural-language text with optional enforcement hooks
 
-- **Status:** Accepted
+- **Status:** Accepted, amended by [ADR-0011](0011-detection-reputation-sanctions.md)
 - **Date:** 2026-11-22
 - **Spec:** [Pericles design](../superpowers/specs/2026-11-22-pericles-design.md)
 

@@ -42,6 +42,7 @@ The primary research questions the system must support:
 | 8 | Requirements with stable IDs, test traceability, mutation testing | ADR-0008 |
 | 9 | Communication: pairwise dialogue + town-square board + village meetings with voting, from v1 | ADR-0009 |
 | 10 | Money = coin item minted from gold at a Mint; barter always available | ADR-0010 |
+| 11 | Agency first: laws are not blocked by default; enforcement by detection; witnessing, hearsay, reputation, villager-imposed sanctions; survival-over-society always possible | ADR-0011 |
 
 ## 3. Architecture
 
@@ -164,17 +165,39 @@ do not own is a recorded event, which may be classified as theft under active la
 
 ### 4.6 Laws
 
-A law = `{id, text, author (experimenter|villagers), enacted_tick, enforcement?}`.
+A law = `{id, text, author (experimenter|villagers), enacted_tick, enforcement_mode, penalty?, hook?, violation_predicate?}`
+(see ADR-0007, amended by ADR-0011).
 
-- **Told-only:** the text is injected into every adult's prompt. Compliance is up to the model.
-- **Enforced:** additionally carries an enforcement hook: a declarative list of mechanical effects drawn from a
-  fixed hook vocabulary (e.g. `tax(source_event, pct, beneficiary)`, `forbid(action, condition)`,
-  `quota(store, item, per_day)`, `penalty(violation, effect)`).
-- **Violation detection** runs for both kinds: each law may declare a violation predicate over events, from the
-  same vocabulary. Told-only laws without a predicate are evaluated by an optional LLM-judge pass that is
-  logged separately and never affects the simulation.
+- **Agency first:** by default the engine never blocks an action only because it is illegal. Villagers can
+  always choose to break a law, e.g. steal food when they or their child are starving.
+- **Hooks** come from a fixed declarative vocabulary: `tax(source_event, pct, beneficiary)` applies automatically.
+  `forbid(action, condition)` and `quota(store, item, per_day)` define what counts as a violation.
+  `penalty(effect)` defines the punishment.
+- **Enforcement modes** per law: `none` (ground truth only), `on_detection` (**default**: penalty only if
+  witnessed or reported), `certain` (penalty always, violation made public, the act still happens), and `block`
+  (opt-in experimenter setting: the intent is rejected and logged as `attempted_violation`; the run is flagged as
+  removing agency).
+- **Law awareness** spreads socially by default: villagers know a law if they attended the meeting that passed
+  it, read it on the board, or were told. Experimenter laws are announced on the board.
+  `law_awareness: universal` puts every law into every prompt.
+- **Ground truth vs. belief:** the engine records every violation (`law_violation`, tagged `under_duress` and/or
+  `unaware`) for the analyst only. Villagers learn of acts only through **witnessing** and **hearsay**
+  (§4.7). Laws without a predicate can be classified by an optional LLM-judge pass, logged separately, that never
+  affects the simulation.
 
-### 4.7 God powers
+### 4.7 Detection, reputation and sanctions
+
+- **Witnessing:** when an action completes, awake adults within `witness_radius` remember the plain fact
+  ("Marco took 5 grain from the communal store"), not a "violation" label. Their own model decides
+  whether it breaks a law. Actors see who is nearby, so they can choose to act unseen.
+- **Hearsay:** `report` and `accuse` dialogue intents and accusation board posts pass information on, and the
+  chain of sources is kept. Lies are possible. The analysis scores accusations true, false or unverifiable.
+- **Reputation:** trust moves with witnessed acts and with hearsay, weighted by trust in the source.
+- **Sanctions:** informal (refusing dialogue, trade or help: ostracism) and formal, through a `sanction`
+  meeting or a law penalty: `fine`, `confiscate`, `ban(building|store)`, `exile(duration)`. Exiles can still
+  forage, hunt and fish outside the village core. The accused may speak at their sanction meeting.
+
+### 4.8 God powers
 
 Drought (yield modifiers), raid (raider band spawns at the map edge, targets stores; palisades and
 defending villagers reduce losses; raiders leave after N ticks), epidemic (health drain, proximity
@@ -189,17 +212,24 @@ change; god event nearby; idle; periodic re-plan (every `replan_hours`).
 
 ### 5.2 Prompt context (target ≤ 2k tokens)
 
-Identity and traits; needs; inventory and property; perception (radius-limited tiles, villagers,
-buildings, village store summary); known recipes and costs; active laws text; top-K memories
-(scored by recency × importance × relevance, using `nomic-embed-text` embeddings); opinions of the
-villagers involved; current goals and plan; recent town-square posts.
+Identity and traits; needs; the critical state of partner and children when known; inventory and property;
+perception (radius-limited tiles, villagers who could witness them, buildings, village store summary); known
+recipes and costs; the laws this villager knows, with their penalties; active sanctions against them; top-K
+memories including hearsay (scored by recency × importance × relevance, using `nomic-embed-text` embeddings,
+with reputation memories about the villagers involved prioritised); opinions of the villagers involved; current goals and
+plan; recent town-square posts.
+
+**Neutral framing:** templates never tell villagers to obey or to break laws. Laws are stated as facts
+about the village, with their known penalties. Motive for violations comes from need pressure and traits
+(greedy, rebellious, dutiful, altruistic, fearful, …). Templates are versioned, and a test rejects steering
+phrases. Instruction-tuned models' bias towards obedience is a finding to measure, not something to tune away.
 
 ### 5.3 LLM call kinds and output schemas
 
 | Kind | Output (JSON, schema-validated) |
 |------|-------------------------------|
 | plan | `{goal, steps:[{action, target, qty}], reason}`. Actions come from the valid-action catalog |
-| dialogue turn | `{say, intent: offer\|accept\|reject\|promise\|inform\|ask\|threaten\|teach\|leave, terms?}` |
+| dialogue turn | `{say, intent: offer\|accept\|reject\|promise\|inform\|ask\|threaten\|teach\|report\|accuse\|refuse_help\|leave, terms?, about?}` |
 | meeting speech | `{say, proposal?}` |
 | vote | `{choice, reason}` |
 | board post | `{text}` |
@@ -207,14 +237,14 @@ villagers involved; current goals and plan; recent town-square posts.
 
 ### 5.4 Communication
 
-- **Dialogue:** initiated between villagers in proximity, ≤ `max_dialogue_turns` turns. It ends in a structured
-  outcome: trade executed, promise recorded (with due tick and terms), knowledge taught, couple formed,
-  or nothing. Promises are tracked, and fulfilment or breach is an event.
+- **Dialogue:** initiated between villagers in proximity, ≤ `max_dialogue_turns` turns. It ends in a list of
+  structured outcomes, possibly empty: trade executed, promise recorded (with due tick and terms), knowledge
+  taught, couple formed, report or accusation made, help refused. Promises are tracked, and fulfilment or breach is an event.
 - **Town-square board:** any adult may post. Recent posts form part of perception.
 - **Meetings:** any adult may call a meeting at the town hall with a topic (proposal, law, election, communal
-  build). Attendees who choose to come speak in turns (capped), then vote. The engine resolves results:
+  build, sanction). Attendees who choose to come speak in turns (capped), then vote. The engine resolves results:
   pass a law (author = villagers, hook only if the proposal maps onto the hook vocabulary),
-  elect a chief, approve a communal project.
+  elect a chief, approve a communal project, apply a sanction (§4.7).
 
 ### 5.5 Executor and robustness
 
@@ -255,8 +285,11 @@ Five metric families, all derived from the event log:
 1. **Survival and growth:** population, births, deaths by cause, lifespan.
 2. **Productivity and economy:** resources gathered per capita, buildings completed, Gini of wealth, trade
    volume, implied prices, coin adoption (share of trades involving coins).
-3. **Social and legal:** violations per law (enforced vs. told-only), promises kept/broken, thefts,
-   cooperation acts, meetings held, laws passed, leadership (elections, centrality).
+3. **Social and legal:** per law and enforcement mode: ground-truth violations (all / `under_duress` /
+   `unaware`), violations witnessed, reports and accusations (true / false / unverifiable), penalties and sanctions applied,
+   attempted violations (block mode), ostracism (the change in a violator's interactions before vs. after a
+   witnessed violation or accusation); promises kept/broken, cooperation acts, meetings held, laws passed,
+   leadership (elections, centrality).
 4. **Agent quality:** invalid-output rate, retries, fallback rate, plan completion rate,
    goal-action consistency, latency and tokens per decision.
 5. **Model-group dynamics:** all of the above broken down by model group in mixed runs, plus cross-group

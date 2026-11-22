@@ -8,7 +8,7 @@ Must · M2 · Proposed
 
 ### REQ-AGT-002: Prompt builder
 Must · M2 · Proposed
-- AC1: The prompt contains identity and traits, needs, inventory and property, perception, known recipes and costs, active laws, retrieved memories, opinions of the villagers involved, current goals and plan, and recent board posts.
+- AC1: The prompt contains identity and traits, needs, inventory and property, the critical state of family members when known, perception (including who could witness them), known recipes and costs, the active laws the villager knows and their penalties, retrieved memories (including hearsay), opinions of the villagers involved, current goals and plan, active sanctions against the villager, and recent board posts.
 - AC2: Perception is limited to `perception_radius` plus the village store summary. No hidden state is leaked.
 - AC3: The prompt stays under a configured token budget (default 2000) by trimming lower-priority sections in a documented order.
 - AC4: Prompts are deterministic for a given state (same state → same prompt bytes).
@@ -47,5 +47,12 @@ Must · M1 · Proposed
 - AC2: It is used for children, as the LLM fallback, and for an all-scripted baseline experiment.
 
 ### REQ-AGT-009: Personality
-Should · M2 · Proposed
+Must · M2 · Proposed
 - AC1: Each villager has traits from the content pack, assigned per config or drawn with the seeded RNG, and they are included in prompts.
+- AC2: The base pack includes traits that bear on rule-following and cooperation (e.g. greedy, rebellious, dutiful, altruistic, fearful), so motive for violations comes from personality and need pressure, not from prompt framing.
+
+### REQ-AGT-010: Neutral prompt framing
+Must · M2 · Proposed
+- AC1: The system prompt and templates neither instruct villagers to obey laws nor invite them to break them. Laws are presented as facts about the village ("The village has decided: …"), together with their known penalties.
+- AC2: Prompt templates are versioned files. The template version is recorded in `meta.json` and in each LLM call event.
+- AC3: A test asserts that templates contain none of a configurable list of steering phrases (e.g. "you must obey", "you may break").

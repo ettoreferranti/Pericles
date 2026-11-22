@@ -32,6 +32,7 @@ Must · M4 · Proposed
 Must · M4 · Proposed
 - AC1: The analysis computes the five metric families (survival and growth; productivity and economy; social and legal; agent quality; model-group dynamics) per in-game day from the event log alone.
 - AC2: In mixed-model runs, every metric can be broken down by model group.
+- AC3: Rule-following metrics include, per law and per model: ground-truth violations (all, `under_duress`, `unaware`), violations witnessed, reports and accusations (true, false or unverifiable), penalties and sanctions applied, `attempted_violation` counts (block mode), and the change in the violator's social interactions in the N days before and after a witnessed violation or accusation (ostracism).
 
 ### REQ-EXP-007: Comparison report
 Must · M4 · Proposed
