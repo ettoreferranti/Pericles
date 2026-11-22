@@ -63,3 +63,9 @@ def test_repository_adrs_pass() -> None:
     """AC1: the real ADR set is well-formed and fully indexed."""
     assert check_adrs(ROOT / "docs/adr") == []
     assert main(["check", "--root", str(ROOT)]) == 0
+
+
+def test_index_link_to_deleted_adr_fails(tmp_path: Path) -> None:
+    make(tmp_path, ["0001", "0002"])
+    (tmp_path / "0002-some-title.md").unlink()
+    assert check_adrs(tmp_path) == ["README.md: index links missing file 0002-some-title.md"]

@@ -9,6 +9,9 @@ from pathlib import Path
 HEADING = re.compile(r"^### (REQ-[A-Z]+-\d{3}): (.+?)\s*$")
 META = re.compile(r"^(Must|Should|Could) · (M\d+) · (Proposed|Accepted|Implemented|Withdrawn)\s*$")
 CRITERION = re.compile(r"^- (AC\d+): (.+?)\s*$")
+NEAR_HEADING = re.compile(r"^\s*#+\s*REQ-")
+NEAR_CRITERION = re.compile(r"^\s*[-*+]\s*AC\d")
+ANY_HEADING = re.compile(r"^\s*#")
 MILESTONE_ROW = re.compile(r"^\|\s*(M\d+)\s*\|\s*(.+?)\s*\|\s*(yes|no)\s*\|\s*$")
 SKIP_FILES = frozenset({"README.md", "milestones.md", "traceability.md"})
 
@@ -41,7 +44,7 @@ def parse_file(path: Path) -> list[Requirement]:
     while i < len(lines):
         heading = HEADING.match(lines[i])
         if heading is None:
-            if lines[i].startswith("### REQ-"):
+            if NEAR_HEADING.match(lines[i]):
                 raise RequirementsError(
                     f"{path}:{i + 1}: malformed requirement heading: {lines[i].strip()!r}"
                 )
@@ -57,13 +60,18 @@ def parse_file(path: Path) -> list[Requirement]:
         i += 2
         statement: list[str] = []
         criteria: list[tuple[str, str]] = []
-        while i < len(lines) and not lines[i].startswith("### "):
+        while i < len(lines) and not ANY_HEADING.match(lines[i]):
             criterion = CRITERION.match(lines[i])
             if criterion is not None:
                 ac_id = criterion.group(1)
                 if any(existing == ac_id for existing, _ in criteria):
                     raise RequirementsError(f"{path}:{i + 1}: duplicate {ac_id} in {req_id}")
                 criteria.append((ac_id, criterion.group(2)))
+            elif NEAR_CRITERION.match(lines[i]):
+                raise RequirementsError(
+                    f"{path}:{i + 1}: malformed acceptance criterion in {req_id}: "
+                    f"{lines[i].strip()!r} (expected '- ACn: text')"
+                )
             elif lines[i].strip() and not criteria:
                 statement.append(lines[i].strip())
             i += 1

@@ -82,3 +82,38 @@ def test_scan_tests_finds_both_naming_styles_recursively(tmp_path: Path) -> None
     write(tmp_path, "tests/helpers.py", mark)
     nodeids = [r.nodeid for r in scan_tests(tmp_path / "tests", tmp_path)]
     assert nodeids == ["tests/sub/test_one.py::test_x", "tests/two_test.py::test_x"]
+
+
+def test_annotated_and_class_level_pytestmark(tmp_path: Path) -> None:
+    src = (
+        "import pytest\n\n"
+        'pytestmark: list[object] = [pytest.mark.req("REQ-A-001")]\n\n'
+        "class TestK:\n"
+        '    pytestmark = pytest.mark.req("REQ-A-002")\n'
+    )
+    refs = scan_file(write(tmp_path, "tests/test_a.py", src), tmp_path)
+    assert refs == [
+        TestRef("REQ-A-001", "tests/test_a.py"),
+        TestRef("REQ-A-002", "tests/test_a.py::TestK"),
+    ]
+
+
+def test_mark_imported_from_pytest(tmp_path: Path) -> None:
+    src = 'from pytest import mark\n\n@mark.req("REQ-A-001")\ndef test_x() -> None: ...\n'
+    refs = scan_file(write(tmp_path, "tests/test_a.py", src), tmp_path)
+    assert refs == [TestRef("REQ-A-001", "tests/test_a.py::test_x")]
+
+
+@pytest.mark.parametrize(
+    "src",
+    [
+        "import pytest\n\n@pytest.mark.req\ndef test_x() -> None: ...\n",
+        "import pytest\n\n"
+        "@pytest.mark.parametrize('v', [pytest.param(1, marks=pytest.mark.req('REQ-A-001'))])\n"
+        "def test_x(v: int) -> None: ...\n",
+    ],
+    ids=["bare-uncalled", "inside-param"],
+)
+def test_unreadable_marker_placements_are_errors(tmp_path: Path, src: str) -> None:
+    with pytest.raises(MarkerError, match=r"test_a\.py:\d+: "):
+        scan_file(write(tmp_path, "tests/test_a.py", src), tmp_path)

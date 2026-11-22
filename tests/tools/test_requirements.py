@@ -110,3 +110,23 @@ def test_malformed_milestone_row_is_an_error(tmp_path: Path) -> None:
     text = MILESTONES.replace("| M1 | Headless sim | no |", "| M1 | Headless sim | maybe |")
     with pytest.raises(RequirementsError, match=r"milestones\.md:6:"):
         load_milestones(write(tmp_path, "milestones.md", text))
+
+
+@pytest.mark.parametrize(
+    "heading", ["##  REQ-SIM-002: Tick loop", "###  REQ-SIM-002: Tick loop", " ### REQ-SIM-002: x"]
+)
+def test_near_miss_headings_are_errors(tmp_path: Path, heading: str) -> None:
+    text = SAMPLE.replace("### REQ-SIM-002: Tick loop", heading)
+    with pytest.raises(RequirementsError, match=r"sim\.md:9: malformed requirement heading"):
+        parse_file(write(tmp_path, "sim.md", text))
+
+
+@pytest.mark.parametrize(
+    "line", ["-  AC3: double space", "* AC3: star bullet", "- AC3 missing colon"]
+)
+def test_malformed_criterion_lines_are_errors(tmp_path: Path, line: str) -> None:
+    text = SAMPLE.replace(
+        "- AC2: Different seeds differ.", f"- AC2: Different seeds differ.\n{line}"
+    )
+    with pytest.raises(RequirementsError, match=r"sim\.md:8: malformed acceptance criterion"):
+        parse_file(write(tmp_path, "sim.md", text))

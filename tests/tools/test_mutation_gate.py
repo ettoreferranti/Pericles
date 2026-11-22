@@ -146,3 +146,78 @@ def test_main_changed_since_with_no_relevant_changes_passes(tmp_path: Path) -> N
     runner = FakeRunner(results="", diff="README.md\n")
     assert main(["run", "--changed-since", "origin/main"], runner=runner, root=tmp_path) == 0
     assert not any(call[0] == "mutmut" for call in runner.calls)
+
+
+def test_changed_out_of_scope_files_do_not_count_as_mutable(tmp_path: Path) -> None:
+    pkg = tmp_path / "src/pericles/core"
+    pkg.mkdir(parents=True)
+    (pkg / "__init__.py").write_text('"""Docstring."""\n', encoding="utf-8")
+    server = tmp_path / "src/pericles/server"
+    server.mkdir(parents=True)
+    (server / "app.py").write_text("def serve() -> None:\n    pass\n", encoding="utf-8")
+    runner = FakeRunner(
+        results="", run_code=1, diff="src/pericles/core/__init__.py\nsrc/pericles/server/app.py\n"
+    )
+    assert main(["run", "--changed-since", "origin/main"], runner=runner, root=tmp_path) == 0
+    assert not any(call[0] == "mutmut" for call in runner.calls)
+
+
+NO_TESTS_FOUND = "Stopping early, because we could not find any test case for any mutant."
+
+
+class OutputRunner(FakeRunner):
+    def __init__(self, results: str, run_code: int, run_out: str) -> None:
+        super().__init__(results=results, run_code=run_code)
+        self.run_out = run_out
+
+    def __call__(self, args: Sequence[str]) -> subprocess.CompletedProcess[str]:
+        if list(args[:2]) == ["mutmut", "run"]:
+            self.calls.append(list(args))
+            return subprocess.CompletedProcess(list(args), self.run_code, self.run_out, "")
+        return super().__call__(args)
+
+
+def test_zero_mutants_generated_passes(tmp_path: Path) -> None:
+    """Functions mutmut does not mutate (Protocol stubs, decorated) yield no mutants."""
+    make_src(tmp_path, with_code=True)
+    runner = OutputRunner(results="", run_code=1, run_out=NO_TESTS_FOUND)
+    assert main(["run"], runner=runner, root=tmp_path) == 0
+
+
+def test_mutmut_crash_without_results_fails(tmp_path: Path) -> None:
+    make_src(tmp_path, with_code=True)
+    runner = OutputRunner(results="", run_code=2, run_out="Traceback (most recent call last):")
+    assert main(["run"], runner=runner, root=tmp_path) == 1
+
+
+def test_unchecked_in_scope_mutants_fail(tmp_path: Path) -> None:
+    """A partial run (crash or interrupt) must not report a perfect score."""
+    make_src(tmp_path, with_code=True)
+    results = (
+        "    pericles.core.world.x_f__mutmut_1: killed\n"
+        "    pericles.core.world.x_f__mutmut_2: not checked\n"
+    )
+    assert main(["run"], runner=FakeRunner(results=results, run_code=1), root=tmp_path) == 1
+
+
+def test_unchecked_mutants_outside_changed_modules_are_ignored(tmp_path: Path) -> None:
+    make_src(tmp_path, with_code=True)
+    results = (
+        "    pericles.core.world.x_f__mutmut_1: killed\n"
+        "    pericles.core.other.x_g__mutmut_1: not checked\n"
+    )
+    runner = FakeRunner(results=results, diff="src/pericles/core/world.py\n")
+    assert main(["run", "--changed-since", "origin/main"], runner=runner, root=tmp_path) == 0
+
+
+class FailingDiff(FakeRunner):
+    def __call__(self, args: Sequence[str]) -> subprocess.CompletedProcess[str]:
+        if list(args[:2]) == ["git", "diff"]:
+            return subprocess.CompletedProcess(list(args), 128, "", "fatal: bad revision")
+        return super().__call__(args)
+
+
+def test_git_diff_failure_fails_the_gate(tmp_path: Path) -> None:
+    make_src(tmp_path, with_code=True)
+    runner = FailingDiff(results="")
+    assert main(["run", "--changed-since", "origin/nope"], runner=runner, root=tmp_path) == 1

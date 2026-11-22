@@ -8,6 +8,7 @@ import re
 import subprocess
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
+from fnmatch import fnmatchcase
 from pathlib import Path
 
 THRESHOLDS: dict[str, float] = {
@@ -17,6 +18,7 @@ THRESHOLDS: dict[str, float] = {
 }
 KILLED = frozenset({"killed", "timeout", "segfault"})
 SURVIVED = frozenset({"survived", "no tests", "suspicious"})
+NO_TESTS_FOUND = "could not find any test case for any mutant"
 RESULT_LINE = re.compile(r"^\s*(\S+__mutmut_\d+): (.+?)\s*$")
 
 Runner = Callable[[Sequence[str]], "subprocess.CompletedProcess[str]"]
@@ -97,6 +99,13 @@ def has_mutable_code(files: Iterable[Path]) -> bool:
     return False
 
 
+def _is_mutation_tested(name: str) -> bool:
+    if not (name.startswith("src/pericles/") and name.endswith(".py")):
+        return False
+    module = name.removeprefix("src/").removesuffix(".py").replace("/", ".")
+    return package_of(module) in THRESHOLDS
+
+
 def _run(args: Sequence[str]) -> subprocess.CompletedProcess[str]:
     return subprocess.run(list(args), capture_output=True, text=True, check=False)
 
@@ -119,23 +128,40 @@ def main(argv: Sequence[str] | None = None, runner: Runner = _run, root: Path = 
     targets = _package_files(root)
     if args.changed_since is not None:
         diff = runner(["git", "diff", "--name-only", f"{args.changed_since}...HEAD"])
+        if diff.returncode != 0:
+            print(f"mutation gate: git diff against {args.changed_since} failed: {diff.stderr}")
+            return 1
         changed = diff.stdout.split()
         globs = module_globs(changed)
         if not globs:
             print("mutation gate: no mutation-tested modules changed")
             return 0
-        targets = [root / n for n in changed if n.startswith("src/") and n.endswith(".py")]
+        targets = [root / n for n in changed if _is_mutation_tested(n)]
     if not has_mutable_code(p for p in targets if p.exists()):
         print("mutation gate: no functions to mutate yet")
         return 0
 
     run_proc = runner(["mutmut", "run", *globs])
     results = parse_results(runner(["mutmut", "results", "--all", "true"]).stdout)
-    result = scores(results, THRESHOLDS)
-    if not any(score.total for score in result.values()):
+    in_scope = {
+        name: status
+        for name, status in results.items()
+        if package_of(name) in THRESHOLDS
+        and (not globs or any(fnmatchcase(name, glob) for glob in globs))
+    }
+    if not in_scope:
+        if run_proc.returncode == 0 or NO_TESTS_FOUND in run_proc.stdout:
+            print("mutation gate: mutmut generated no mutants for the selected code")
+            return 0
         print(f"mutation gate: mutmut produced no results (exit {run_proc.returncode})")
         print(run_proc.stdout[-2000:], run_proc.stderr[-2000:])
         return 1
+    unchecked = sorted(n for n, st in in_scope.items() if st not in KILLED | SURVIVED)
+    if unchecked:
+        print(f"mutation gate: {len(unchecked)} mutant(s) not checked (exit {run_proc.returncode})")
+        print("\n".join(f"  {n}: {in_scope[n]}" for n in unchecked[:20]))
+        return 1
+    result = scores(in_scope, THRESHOLDS)
     for pkg in sorted(result):
         score = result[pkg]
         if score.total:

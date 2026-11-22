@@ -8,6 +8,7 @@ from collections.abc import Sequence
 from pathlib import Path
 
 ADR_FILE = re.compile(r"^(\d{4})-[a-z0-9]+(?:-[a-z0-9]+)*\.md$")
+INDEX_LINK = re.compile(r"\]\((\d{4}-[^)]+\.md)\)")
 SECTIONS = ("Context", "Decision", "Consequences")
 
 
@@ -42,6 +43,10 @@ def check_adrs(adr_dir: Path) -> list[str]:
         for path in files:
             if f"]({path.name})" not in index_text:
                 errors.append(f"README.md: index does not link {path.name}")
+        names = {path.name for path in files}
+        for target in INDEX_LINK.findall(index_text):
+            if target not in names:
+                errors.append(f"README.md: index links missing file {target}")
     return errors
 
 
