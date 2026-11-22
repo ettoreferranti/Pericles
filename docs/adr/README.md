@@ -16,5 +16,6 @@ Format: Michael Nygard. New ADRs get the next number. Superseded ADRs stay, with
 | [0010](0010-coins-minted-at-mint.md) | Money as coins minted from gold at a Mint | Accepted |
 | [0011](0011-detection-reputation-sanctions.md) | Enforcement by detection, reputation and villager-imposed sanctions | Amended by 0012 |
 | [0012](0012-emergent-institutions.md) | Emergent institutions from generic building blocks | Accepted |
+| [0013](0013-engine-kernel-conventions.md) | Engine kernel conventions | Accepted |
 
 Template: copy any ADR and keep the sections Context / Decision / Consequences.

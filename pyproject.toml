@@ -4,7 +4,10 @@ version = "0.0.1"
 description = "A research sandbox: a village society whose villagers are driven by local LLMs"
 readme = "README.md"
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "pydantic>=2.9,<3",
+    "pyyaml>=6.0",
+]
 
 [build-system]
 requires = ["hatchling"]
@@ -20,7 +23,6 @@ dev = [
     "mypy>=1.13",
     "ruff>=0.8",
     "mutmut>=3.8,<4",
-    "pyyaml>=6.0",
     "types-PyYAML>=6.0",
 ]
 
@@ -35,6 +37,7 @@ markers = [
 
 [tool.mypy]
 strict = true
+plugins = ["pydantic.mypy"]
 python_version = "3.12"
 files = ["src", "tools", "tests"]
 mypy_path = "tools"

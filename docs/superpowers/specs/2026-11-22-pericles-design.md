@@ -74,7 +74,7 @@ The primary research questions the system must support:
 
 | Package | Responsibility | Depends on |
 |---------|----------------|------------|
-| `pericles.core` | Deterministic engine: world, tick loop, intents → validation → resolution → events, modifiers, content registry | nothing (stdlib + numpy) |
+| `pericles.core` | Deterministic engine: world, tick loop, intents → validation → resolution → events, modifiers, content registry | nothing (stdlib + pydantic + PyYAML; ADR-0013) |
 | `pericles.agents` | Minds, decision triggers, prompt building, executor, memory, opinions, dialogue, meetings, scripted child/fallback behaviour | `core` (read-only queries + intent submission), `llm` (interface only) |
 | `pericles.llm` | Gateway, backends (Ollama, MLX, Fake), schema validation, retries, cache, call metrics | nothing domain-specific |
 | `pericles.experiment` | Config loading, runner, interventions, god powers, run directory, sweeps | `core`, `agents`, `llm` |
