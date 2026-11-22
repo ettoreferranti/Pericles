@@ -1,0 +1,10 @@
+items:
+  - {id: berries, weight: 0.2, nutrition: 15, tags: [food]}
+  - {id: grain, weight: 0.5, nutrition: 10, tags: [food]}
+  - {id: meat, weight: 1.0, nutrition: 30, tags: [food]}
+  - {id: fish, weight: 0.8, nutrition: 25, tags: [food]}
+  - {id: wood, weight: 2.0, tags: [material]}
+  - {id: stone, weight: 3.0, tags: [material]}
+  - {id: iron_ore, weight: 3.0, tags: [ore]}
+  - {id: gold_ore, weight: 3.0, tags: [ore]}
+  - {id: hide, weight: 1.0, tags: [material]}

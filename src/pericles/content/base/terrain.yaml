@@ -1,0 +1,8 @@
+terrains:
+  - {id: water, walkable: false, color: "#3b6ea5"}
+  - {id: fertile_soil, walkable: true, move_cost: 1.0, color: "#6b8f3e"}
+  - {id: grass, walkable: true, move_cost: 1.0, color: "#8fb35a"}
+  - {id: forest, walkable: true, move_cost: 2.0, color: "#2f5d2e"}
+  - {id: rock, walkable: true, move_cost: 3.0, color: "#8a8178"}
+  - {id: iron_vein, walkable: true, move_cost: 3.0, color: "#7a5a4a"}
+  - {id: gold_vein, walkable: true, move_cost: 3.0, color: "#b8963e"}
