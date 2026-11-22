@@ -8,4 +8,15 @@ experimenter can change during a run.
 - Requirements: [docs/requirements/](docs/requirements/README.md)
 - Architecture decisions: [docs/adr/](docs/adr/README.md)
 
-Status: requirements accepted; implementation planning.
+Status: M0 Foundations complete; M1 Headless sim next.
+
+## Development
+
+Requirements: macOS or Linux, Python ≥ 3.12 with [uv](https://docs.astral.sh/uv/), Node ≥ 20 with pnpm, and [Ollama](https://ollama.com) for live runs.
+
+```bash
+uv sync && uv run pytest
+cd viewer && pnpm install && pnpm dev
+```
+
+See [CLAUDE.md](CLAUDE.md) for all commands and working agreements.

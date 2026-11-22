@@ -4,7 +4,7 @@ The traceability check (REQ-NFR-007) treats every requirement in a milestone mar
 
 | Milestone | Title | Done |
 |-----------|-------|------|
-| M0 | Foundations | no |
+| M0 | Foundations | yes |
 | M1 | Headless sim | no |
 | M2 | LLM minds | no |
 | M3 | Society | no |
