@@ -1,0 +1,54 @@
+[project]
+name = "pericles"
+version = "0.0.1"
+description = "A research sandbox: a village society whose villagers are driven by local LLMs"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = []
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/pericles"]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "hypothesis>=6.120",
+    "mypy>=1.13",
+    "ruff>=0.8",
+    "mutmut>=3.8,<4",
+    "pyyaml>=6.0",
+    "types-PyYAML>=6.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["tools"]
+addopts = "--strict-markers -m 'not slow'"
+markers = [
+    "req(*ids): links a test to one or more requirement IDs (REQ-<AREA>-NNN)",
+    "slow: needs live external services such as Ollama; excluded by default",
+]
+
+[tool.mypy]
+strict = true
+python_version = "3.12"
+files = ["src", "tools", "tests"]
+mypy_path = "tools"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+extend-exclude = ["docs"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "SIM", "RUF"]
+# mutmut names class-method mutants with U+01C1 (e.g. "xǁWorldǁstep__mutmut_1")
+allowed-confusables = ["ǁ"]
+
+[tool.mutmut]
+source_paths = ["src/pericles"]
+pytest_add_cli_args_test_selection = ["tests/pericles"]

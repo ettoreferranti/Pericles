@@ -1,0 +1,15 @@
+.venv/
+__pycache__/
+*.pyc
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.hypothesis/
+mutants/
+runs/
+docs/requirements/traceability.md
+viewer/node_modules/
+viewer/dist/
+viewer/reports/
+viewer/.stryker-tmp/
+.DS_Store
