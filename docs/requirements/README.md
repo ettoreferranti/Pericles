@@ -10,7 +10,14 @@ Requirements are derived from the [design spec](../superpowers/specs/2026-11-22-
 - **Milestone:** M0–M5 (see spec §12).
 - **Acceptance criteria** are numbered (`AC1`, `AC2`, …). Tests reference them as
   `@pytest.mark.req("REQ-SIM-001")`, and the docstring names the AC.
-- CI fails if an `Accepted` or `Implemented` requirement has no linked test (ADR-0008).
+- CI fails if an `Implemented` requirement, or one in a milestone marked done in [milestones.md](milestones.md), has no linked test (ADR-0008, REQ-NFR-007).
+
+## Revising requirements
+
+The catalog is expected to evolve, for example as social mechanics become more sophisticated.
+- **Add:** new requirement with the next free ID in its area, status `Proposed` until agreed.
+- **Change:** edit the requirement in place, note the change in the commit message, and set the status back to `Accepted` if it was `Implemented` (the tests must be revisited). Significant design changes also get a new ADR that amends or supersedes the old one.
+- **Remove:** set status `Withdrawn` and keep the entry. Tests that reference it make CI fail until they are removed or re-pointed.
 
 ## Areas
 

@@ -10,7 +10,7 @@ The project is an experiment platform. Wrong simulation behaviour silently corru
 
 ## Decision
 
-Requirements live in `docs/requirements/` with stable IDs (`REQ-<AREA>-NNN`) and acceptance criteria. Tests declare what they cover with `@pytest.mark.req(...)`. A script generates a traceability matrix, and CI fails if an accepted requirement has no tests. Mutation testing uses `mutmut` (Python) and Stryker (viewer), with initial score targets ≥ 80% for `core` and ≥ 70% elsewhere. It runs incrementally on PRs and in full nightly or on demand.
+Requirements live in `docs/requirements/` with stable IDs (`REQ-<AREA>-NNN`) and acceptance criteria. Tests declare what they cover with `@pytest.mark.req(...)`. A script generates a traceability matrix, and CI fails if an `Implemented` requirement, or one in a milestone marked done, has no tests. `Accepted` requirements without tests are reported as open gaps. Mutation testing uses `mutmut` (Python) and Stryker (viewer), with initial score targets ≥ 80% for `core` and ≥ 70% elsewhere. It runs incrementally on PRs and in full nightly or on demand.
 
 ## Consequences
 

@@ -8,4 +8,4 @@ experimenter can change during a run.
 - Requirements: [docs/requirements/](docs/requirements/README.md)
 - Architecture decisions: [docs/adr/](docs/adr/README.md)
 
-Status: requirements and design phase.
+Status: requirements accepted; implementation planning.
