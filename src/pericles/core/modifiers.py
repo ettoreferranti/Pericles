@@ -128,6 +128,12 @@ def resolve(
     villager: str | None = None,
     building: str | None = None,
 ) -> Effective:
+    """Fold the matching modifiers over `base` (REQ-SIM-006 AC2).
+
+    Stacking order: matching modifiers apply in the order set, then add, then mul.
+    Within each op the given list order is kept. Among `set` modifiers the last one
+    wins; `add` values sum; `mul` values multiply.
+    """
     tag_tuple = tuple(tags)
     active = [
         m

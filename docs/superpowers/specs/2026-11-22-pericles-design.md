@@ -84,7 +84,7 @@ The primary research questions the system must support:
 
 ### 3.2 Core principles
 
-- **The engine is pure and deterministic.** `step(state, intents, rng) → (state', events)`. It knows
+- **The engine is deterministic.** `step(state, intents)` mutates `state` in place and returns `(state, events)`; the seeded RNG is part of `state` (ADR-0013). It knows
   nothing about LLMs. Given the same seed, config, interventions and intents, it produces an identical state hash.
 - **Intents, not mutations.** Agents submit intents. The engine validates them against the rules, content and
   the current state, and resolves conflicts in a seeded order. Every resolution emits events.

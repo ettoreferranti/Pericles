@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Hashable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -15,6 +15,28 @@ from pericles.core.content.schema import SECTIONS, Model, PackFile
 
 class ContentError(Exception):
     """Content is invalid; the message names file, definition and field."""
+
+
+class _UniqueKeyLoader(yaml.SafeLoader):
+    """SafeLoader that rejects a repeated mapping key instead of keeping the last."""
+
+    def construct_mapping(self, node: yaml.MappingNode, deep: bool = False) -> dict[Any, Any]:
+        seen: set[Any] = set()
+        for key_node, _ in node.value:
+            key = self.construct_object(key_node, deep=True)
+            if isinstance(key, Hashable):
+                if key in seen:
+                    line = key_node.start_mark.line + 1
+                    raise _DuplicateKeyError(line, key)
+                seen.add(key)
+        return super().construct_mapping(node, deep=deep)
+
+
+class _DuplicateKeyError(Exception):
+    def __init__(self, line: int, key: object) -> None:
+        super().__init__(f"{line}: duplicate key {key!r}")
+        self.line = line
+        self.key = key
 
 
 @dataclass(frozen=True)
@@ -50,7 +72,9 @@ def load_pack(path: Path) -> Pack:
 
 def _read_yaml(file: Path) -> dict[str, Any]:
     try:
-        raw = yaml.safe_load(file.read_text(encoding="utf-8"))
+        raw = yaml.load(file.read_text(encoding="utf-8"), Loader=_UniqueKeyLoader)
+    except _DuplicateKeyError as exc:
+        raise ContentError(f"{file}:{exc.line}: duplicate key {exc.key!r}") from None
     except yaml.YAMLError as exc:
         raise ContentError(f"{file}: invalid YAML: {exc}") from None
     if raw is None:

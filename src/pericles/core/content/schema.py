@@ -4,12 +4,14 @@ from __future__ import annotations
 
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, StringConstraints
 
 Id = Annotated[str, StringConstraints(pattern=r"^[a-z][a-z0-9_]*$")]
-Count = Annotated[int, Field(gt=0)]
-NonNegativeInt = Annotated[int, Field(ge=0)]
-NonNegative = Annotated[float, Field(ge=0)]
+# Strict numerics: YAML ints are valid for float fields, but bools and strings are not.
+Float = Annotated[float, Field(strict=True)]
+Count = Annotated[StrictInt, Field(gt=0)]
+NonNegativeInt = Annotated[StrictInt, Field(ge=0)]
+NonNegative = Annotated[float, Field(strict=True, ge=0)]
 Bundle = dict[Id, Count]
 TargetKind = Literal["action", "recipe", "building", "need", "item", "node"]
 
@@ -35,7 +37,7 @@ TARGET_SECTION: dict[str, str] = {
 
 
 class Model(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True)
+    model_config = ConfigDict(extra="forbid", frozen=True, allow_inf_nan=False)
 
 
 class TargetDef(Model):
@@ -48,13 +50,13 @@ class ModifierDef(Model):
     target: TargetDef
     attribute: Id
     op: Literal["add", "mul", "set"]
-    value: float
+    value: Float
 
 
 class TerrainDef(Model):
     id: Id
-    walkable: bool
-    move_cost: float = Field(default=1.0, gt=0)
+    walkable: StrictBool
+    move_cost: Float = Field(default=1.0, gt=0)
     color: str = Field(pattern=r"^#[0-9a-fA-F]{6}$")
 
 
@@ -71,7 +73,7 @@ class NodeDef(Model):
     id: Id
     yields: Id
     terrains: tuple[Id, ...] = Field(min_length=1)
-    density: float = Field(gt=0, le=1)
+    density: Float = Field(gt=0, le=1)
     stock: Count
     regrowth_per_day: NonNegative = 0.0
 
@@ -79,14 +81,14 @@ class NodeDef(Model):
 class NeedDef(Model):
     id: Id
     rate_per_hour: NonNegative
-    critical: float = Field(default=100.0, gt=0, le=100)
+    critical: Float = Field(default=100.0, gt=0, le=100)
 
 
 class RequiresDef(Model):
     tools: tuple[Id, ...] = ()
     skill: Id | None = None
     min_skill: NonNegative = 0.0
-    knowledge: bool = False
+    knowledge: StrictBool = False
 
 
 class LocationDef(Model):
@@ -123,7 +125,7 @@ class BuildingDef(Model):
     workers: NonNegativeInt = 0
     housing: NonNegativeInt = 0
     storage: NonNegativeInt = 0
-    entrance: bool = True
+    entrance: StrictBool = True
     tags: tuple[Id, ...] = ()
 
 

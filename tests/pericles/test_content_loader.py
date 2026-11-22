@@ -145,3 +145,42 @@ def test_location_helper_edge_cases() -> None:
     assert _location({"items": [{"id": "w"}]}, ("items", 0, "weight")) == "items[w].weight"
     top: list[object] = [{"id": "x", "a": [{"id": "y"}]}]
     assert _location(top, (0, "a", 0)) == "[x].a[y]"  # type: ignore[arg-type]
+
+
+def test_duplicate_top_level_key_is_rejected(tmp_path: Path) -> None:
+    """AC1: a repeated section key must not silently drop the first block."""
+    text = "items:\n  - {id: wood}\nitems:\n  - {id: stone}\n"
+    with pytest.raises(ContentError, match=r"a\.yaml:3: duplicate key 'items'"):
+        load_pack(pack(tmp_path, {"a.yaml": text}))
+
+
+def test_duplicate_nested_key_is_rejected(tmp_path: Path) -> None:
+    """AC1: a repeated field in a definition is an error naming file and key."""
+    text = "actions:\n  - id: fell\n    duration_ticks: 5\n    duration_ticks: 6\n"
+    with pytest.raises(ContentError, match=r"a\.yaml:4: duplicate key 'duration_ticks'"):
+        load_pack(pack(tmp_path, {"a.yaml": text}))
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        'terrains:\n  - {id: g, walkable: true, move_cost: true, color: "#8fb35a"}\n',
+        'terrains:\n  - {id: g, walkable: 1, color: "#8fb35a"}\n',
+        'terrains:\n  - {id: g, walkable: true, move_cost: .inf, color: "#8fb35a"}\n',
+        "actions:\n  - {id: a, duration_ticks: true}\n",
+        'actions:\n  - {id: a, duration_ticks: "5"}\n',
+        "items:\n  - id: x\n    modifiers:\n"
+        "      - {target: {kind: item}, attribute: a, op: add, value: .nan}\n",
+        "buildings:\n  - {id: b, build_work: 1, housing: true}\n",
+    ],
+)
+def test_lax_coercion_and_non_finite_numbers_are_rejected(tmp_path: Path, text: str) -> None:
+    """AC1: bools, numeric strings and inf/nan are not accepted as numbers or flags."""
+    with pytest.raises(ContentError, match=r"a\.yaml"):
+        load_pack(pack(tmp_path, {"a.yaml": text}))
+
+
+def test_int_values_still_accepted_for_float_fields(tmp_path: Path) -> None:
+    """AC1: YAML ints remain valid for float fields."""
+    text = 'terrains:\n  - {id: g, walkable: true, move_cost: 2, color: "#8fb35a"}\n'
+    assert load_pack(pack(tmp_path, {"a.yaml": text})).defs["terrains"]["g"].move_cost == 2.0  # type: ignore[attr-defined]
