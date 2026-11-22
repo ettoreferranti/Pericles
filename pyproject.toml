@@ -49,6 +49,9 @@ select = ["E", "F", "I", "B", "UP", "SIM", "RUF"]
 # mutmut names class-method mutants with U+01C1 (e.g. "xǁWorldǁstep__mutmut_1")
 allowed-confusables = ["ǁ"]
 
+[tool.ruff.lint.isort]
+known-first-party = ["pericles", "pericles_tools"]
+
 [tool.mutmut]
 source_paths = ["src/pericles"]
 pytest_add_cli_args_test_selection = ["tests/pericles"]
