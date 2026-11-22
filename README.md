@@ -8,7 +8,7 @@ experimenter can change during a run.
 - Requirements: [docs/requirements/](docs/requirements/README.md)
 - Architecture decisions: [docs/adr/](docs/adr/README.md)
 
-Status: M0 Foundations complete; M1 Headless sim next.
+Status: M1a Engine kernel complete; M1b Gameplay next.
 
 ## Development
 
