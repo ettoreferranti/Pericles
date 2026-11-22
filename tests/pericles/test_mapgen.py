@@ -8,6 +8,7 @@ import pytest
 from pericles.core.content.registry import Registry
 from pericles.core.geometry import Coord
 from pericles.core.mapgen import (
+    _EPS,
     Band,
     MapParams,
     TileMap,
@@ -212,6 +213,8 @@ def test_boundary_parameters_are_accepted(registry: Registry, map_params: MapPar
         ({"start_radius": -1}, "start_radius must be non-negative"),
         ({"feature_size": 0}, "feature_size must be at least 1"),
         ({"octaves": 0}, "octaves must be at least 1"),
+        ({"start_terrain": "lava"}, "unknown terrain 'lava'"),
+        ({"veins": (Vein("mithril", 0.01, "rock"),)}, "unknown terrain 'mithril'"),
         ({"bands": ()}, "map needs at least one band"),
         ({"bands": (Band("grass", float("nan")),)}, "shares must be finite numbers"),
         ({"bands": (Band("grass", 1.2), Band("water", -0.2))}, "band shares must be non-negative"),
@@ -238,3 +241,21 @@ def test_golden_digest_with_unit_feature_size(registry: Registry, map_params: Ma
     params = replace(map_params, feature_size=1)
     expected = "3867c47c9d20e106a70baf731696c25cf9919ad82ed113e3731204560e269b20"
     assert generate_map(7, params, registry).digest() == expected
+
+
+def test_tolerance_boundaries_are_inclusive(registry: Registry, map_params: MapParams) -> None:
+    """Shares may be off by exactly the tolerance, but not by more."""
+    ok = (Band("grass", 1.0), Band("water", _EPS))
+    generate_map(0, replace(map_params, bands=ok, veins=()), registry)
+    bad = (Band("grass", 1.0), Band("water", 2 * _EPS))
+    with pytest.raises(ValueError, match="sum to 1"):
+        generate_map(0, replace(map_params, bands=bad, veins=()), registry)
+    low = (Band("grass", 1.0 - 2 * _EPS),)
+    with pytest.raises(ValueError, match="sum to 1"):
+        generate_map(0, replace(map_params, bands=low, veins=()), registry)
+    bands = (Band("grass", 0.5), Band("rock", 0.5))
+    edge = (Vein("iron_vein", 0.5 + _EPS, "rock"),)
+    generate_map(0, replace(map_params, bands=bands, veins=edge), registry)
+    over = (Vein("iron_vein", 0.5 + 2 * _EPS, "rock"),)
+    with pytest.raises(ValueError, match="more than their host"):
+        generate_map(0, replace(map_params, bands=bands, veins=over), registry)

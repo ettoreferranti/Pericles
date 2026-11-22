@@ -13,6 +13,8 @@ from pericles.core.canonical import digest
 from pericles.core.content.registry import Registry
 from pericles.core.geometry import Coord
 
+_EPS = 2.0**-30  # a power of two, so boundary sums are exact in floating point
+
 
 @dataclass(frozen=True)
 class Band:
@@ -102,7 +104,8 @@ def value_noise(
 ) -> list[float]:
     """Multi-octave value noise in [0, 1], fully determined by `rng`."""
     result = [0.0] * (width * height)
-    amplitude, total, cell = 1.0, 0.0, feature_size  # pragma: no mutate
+    amplitude = 1.0  # pragma: no mutate  (a uniform scale cancels in the normalisation)
+    total, cell = 0.0, feature_size
     for _ in range(octaves):
         cell = max(1, cell)
         grid_w = width // cell + 2
@@ -139,7 +142,7 @@ def _validate(params: MapParams, registry: Registry) -> None:
         raise ValueError("shares must be finite numbers")
     if any(band.share < 0 for band in params.bands):
         raise ValueError("band shares must be non-negative")
-    if abs(sum(band.share for band in params.bands) - 1.0) > 1e-9:  # pragma: no mutate
+    if abs(sum(band.share for band in params.bands) - 1.0) > _EPS:
         raise ValueError("band shares must sum to 1")
     names = [b.terrain for b in params.bands] + [v.terrain for v in params.veins]
     for name in [*names, params.start_terrain]:
@@ -154,7 +157,7 @@ def _validate(params: MapParams, registry: Registry) -> None:
             raise ValueError(f"vein {vein.terrain!r}: share must be non-negative")
         vein_share[vein.host] = vein_share.get(vein.host, 0.0) + vein.share
     for host, share in vein_share.items():
-        if share > band_share[host] + 1e-9:  # pragma: no mutate
+        if share > band_share[host] + _EPS:
             raise ValueError(f"veins on {host!r} take more than their host band's share")
     if not registry.terrains[params.start_terrain].walkable:
         raise ValueError(f"start_terrain {params.start_terrain!r} is not walkable")
@@ -167,12 +170,11 @@ def generate_map(seed: int, params: MapParams, registry: Registry) -> TileMap:
     rng = random.Random(seed)
     elevation = value_noise(rng, width, height, params.feature_size, params.octaves)
     order = sorted(range(n), key=lambda i: (elevation[i], i))
-    terrain = [""] * n  # pragma: no mutate  (every tile is assigned below)
+    terrain = [""] * n  # pragma: no mutate  (placeholder; every tile is reassigned)
     start, cumulative = 0, 0.0
-    for k, band in enumerate(params.bands):
+    for band in params.bands:
         cumulative += band.share
-        last = k == len(params.bands) - 1  # pragma: no mutate  (round(1.0 * n) is n anyway)
-        end = n if last else min(n, round(cumulative * n))  # pragma: no mutate
+        end = min(n, round(cumulative * n))
         for i in order[start:end]:
             terrain[i] = band.terrain
         start = max(start, end)
