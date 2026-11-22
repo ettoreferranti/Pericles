@@ -26,7 +26,7 @@ Must · M3 · Proposed
 
 ### REQ-SOC-005: Meetings
 Must · M3 · Proposed
-- AC1: Any adult may call a meeting at an existing town hall, with a topic type `{proposal, law, election, project, sanction}` and a text.
+- AC1: Any adult may call a meeting at an existing town hall, with a topic type `{proposal, law, office, election, project, sanction, contract}` and a text.
 - AC2: Invited adults decide whether to attend. Attendees give at most `max_meeting_speeches` speeches in a seeded order.
 - AC3: The meeting ends with a vote by attendees. The engine resolves it by the configured voting rule (default: simple majority of attendees, ties fail).
 - AC4: A meeting requires a quorum (parameter). Without one it is closed with no result.
@@ -35,9 +35,10 @@ Must · M3 · Proposed
 ### REQ-SOC-006: Meeting outcomes
 Must · M3 · Proposed
 - AC1: A passed law proposal is added to active laws with `author: villagers`. Attendees learn it immediately (REQ-SOC-017).
-- AC2: A passed election sets the chief role. Role effects are content-defined modifiers or permissions.
+- AC2: A passed `office` proposal creates, amends or abolishes an office (REQ-SOC-018). A passed `election` assigns or removes an office holder.
 - AC3: A passed project creates a communal construction site or communal goal visible to all.
 - AC4: A passed sanction is applied per REQ-SOC-014.
+- AC5: A passed `contract` creates a contract with the village (communal store) as one party (REQ-SOC-019).
 
 ### REQ-SOC-007: Laws
 Must · M3 · Proposed
@@ -84,14 +85,14 @@ Must · M3 · Proposed
 ### REQ-SOC-014: Sanctions
 Must · M3 · Proposed
 - AC1: Informal: a villager can decline dialogue, trade or help with anyone. Each refusal is an event with target and stated reason.
-- AC2: Formal sanctions (via a `sanction` meeting or a law's penalty) include: `fine(items)`, `confiscate(items)`, `ban(building|store)` and `exile(duration)`.
+- AC2: Formal sanctions (via a `sanction` meeting, an office holder with the matching permission (REQ-SOC-020), or an automatic law penalty in `on_detection`/`certain` mode) include: `fine(items)`, `confiscate(items)`, `ban(building|store)` and `exile(duration)`.
 - AC3: `ban` and `exile` are enforced by the engine as access rules. An exiled villager cannot enter the village core or use communal buildings for the duration. They can still survive outside (forage, hunt, fish).
 - AC4: A sanction against a villager who lacks the fined items applies what they have and records the shortfall.
 
 ### REQ-SOC-015: Enforcement modes
 Must · M3 · Proposed
-Each law has a mode: `none | on_detection | certain | block`. Default: `on_detection`.
-- AC1: `none`: violations are recorded as ground truth only. No automatic penalty.
+Each law has a mode: `by_villagers | on_detection | certain | block`. Default: `by_villagers`.
+- AC1: `by_villagers`: the engine records violations as ground truth and applies no penalty. The law's declared penalty (if any) is shown to villagers as the agreed punishment, but only villagers can impose sanctions (meetings, permitted office holders, informal refusal).
 - AC2: `on_detection`: the law's penalty is applied automatically only if the violation was witnessed by at least one adult, or reported by one within `report_window`.
 - AC3: `certain`: the penalty is always applied and the violation is made public to all adults. The action itself still happens.
 - AC4: `block`: the engine rejects matching intents (`forbidden_by_law:<id>`) and logs an `attempted_violation` event. This mode is opt-in, settable only by the experimenter, and flagged in the run metadata as removing agency.
@@ -109,3 +110,42 @@ Must · M3 · Proposed
 - AC1: By default, a villager knows a law if they were present when it was enacted (meeting attendee), read it on the board, or were told about it in dialogue. A law enacted by the experimenter is announced on the board.
 - AC2: The config option `law_awareness: universal` makes every active law known to all adults, which was the original behaviour.
 - AC3: Violations by villagers who did not know the law are tagged `unaware` in ground truth.
+
+### REQ-SOC-018: Offices
+Must · M3 · Proposed
+- AC1: An office has id, name, duties (free text), holder(s), pay (items per period, from the communal store or a named source), term length, granted permissions (REQ-SOC-020) and a removal rule (default: a meeting vote).
+- AC2: Offices are created, amended and abolished only by meeting outcomes or experimenter interventions. The engine defines no named offices. "Chief", "guard", "judge" etc. are villager inventions.
+- AC3: Pay is transferred automatically each period. If the source lacks the items, the shortfall is recorded and the holder's memory receives it.
+- AC4: Office duties appear in the holder's prompt. Every villager who knows of the office sees its holders in their prompt.
+- AC5: Office holders can neglect or abuse their duties. The engine never enforces duties, it only records actions.
+
+### REQ-SOC-019: Contracts
+Must · M3 · Proposed
+- AC1: A contract is a recurring agreement between two parties (villagers or the village): obligations of each per period, start, duration or open-ended, and termination terms.
+- AC2: Contracts are made in dialogue (between villagers) or in meetings (with the village).
+- AC3: At each period end, the engine evaluates each party's obligations from events and emits `contract_fulfilled` or `contract_breached` per party. Items owed are not transferred automatically unless the contract says `auto_pay`.
+- AC4: Either party can terminate per the termination terms. Early termination is an event.
+
+### REQ-SOC-020: Permissions
+Must · M3 · Proposed
+- AC1: The permission vocabulary includes at least `confiscate`, `fine`, `ban`, `detain(duration)` and `spend_communal(item, limit_per_period)`.
+- AC2: An office holder may use a granted permission on any villager. The engine applies it as a sanction or transfer and records holder, target and stated reason.
+- AC3: A villager without the permission cannot use the mechanic. Such an intent is rejected with reason `no_permission` (permissions are capabilities, not laws, so this is consistent with REQ-SOC-015 AC5).
+- AC4: `detain` prevents the target from leaving a designated building for the duration. Detainees still need food. Whether they are fed is up to the villagers.
+
+### REQ-SOC-021: Watch actions
+Must · M3 · Proposed
+- AC1: The action catalog includes `guard(building)`, `patrol(area)`, `follow(villager)` and `keep_watch` (stay awake at night at reduced energy).
+- AC2: A guarding or patrolling villager has an extended `watch_radius` for witnessing.
+- AC3: Sleeping villagers witness nothing (see REQ-SOC-011 AC1).
+
+### REQ-SOC-022: Intervention in acts
+Must · M3 · Proposed
+- AC1: An adult within reach of a villager performing a multi-tick action can `intervene`, which interrupts that action (REQ-SIM-008 AC3). Both parties' memories record it.
+- AC2: The target may immediately retry, leave, or respond. No combat system exists in v1, and repeated intervention is the only physical deterrent.
+
+### REQ-SOC-023: Loss discovery
+Must · M3 · Proposed
+- AC1: When the owner (or office holder responsible for a communal store) inspects a store, they receive a memory of any unexplained decrease since their last inspection: items, amount and time window, without the culprit's identity.
+- AC2: Inspection happens automatically whenever the owner uses the store, and can be an explicit action.
+

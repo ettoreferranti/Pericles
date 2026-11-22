@@ -14,6 +14,7 @@ Format: Michael Nygard. New ADRs get the next number. Superseded ADRs stay, with
 | [0008](0008-requirements-traceability-mutation-testing.md) | Requirements traceability and mutation testing | Accepted |
 | [0009](0009-communication-dialogue-board-meetings.md) | Dialogue, town-square board and meetings from v1 | Accepted |
 | [0010](0010-coins-minted-at-mint.md) | Money as coins minted from gold at a Mint | Accepted |
-| [0011](0011-detection-reputation-sanctions.md) | Enforcement by detection, reputation and villager-imposed sanctions | Accepted |
+| [0011](0011-detection-reputation-sanctions.md) | Enforcement by detection, reputation and villager-imposed sanctions | Amended by 0012 |
+| [0012](0012-emergent-institutions.md) | Emergent institutions from generic building blocks | Accepted |
 
 Template: copy any ADR and keep the sections Context / Decision / Consequences.

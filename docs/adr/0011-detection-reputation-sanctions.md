@@ -1,6 +1,6 @@
 # ADR-0011: Enforcement by detection, reputation and villager-imposed sanctions
 
-- **Status:** Accepted (amends ADR-0007)
+- **Status:** Accepted (amends ADR-0007), amended by [ADR-0012](0012-emergent-institutions.md)
 - **Date:** 2026-11-22
 - **Spec:** [Pericles design](../superpowers/specs/2026-11-22-pericles-design.md)
 
@@ -10,7 +10,7 @@ ADR-0007 made laws text plus optional mechanical hooks. A `forbid` hook blocked 
 
 ## Decision
 
-1. **The engine never blocks an action only because it is illegal** (default). Enforcement is a per-law mode: `none`, `on_detection` (the default: penalty only if witnessed or reported), `certain` (penalty always, violation made public), or `block` (opt-in experimenter setting, flagged as removing agency; blocked attempts are logged).
+1. **The engine never blocks an action only because it is illegal** (default). Enforcement is a per-law mode: `none` (replaced by `by_villagers` in ADR-0012), `on_detection` (penalty only if witnessed or reported; the default was changed to `by_villagers` by ADR-0012), `certain` (penalty always, violation made public), or `block` (opt-in experimenter setting, flagged as removing agency; blocked attempts are logged).
 2. **Witnessing:** adults within `witness_radius` remember the plain fact of an act, not a "violation" label. Their own model judges it. Actors know who could see them.
 3. **Information spreads:** `report` and `accuse` dialogue intents and accusation posts. Hearsay is stored with its chain of sources. Accusations are scored true, false or unverifiable against ground truth, for analysis only.
 4. **Reputation:** trust moves with witnessed acts and with hearsay, weighted by trust in the source.

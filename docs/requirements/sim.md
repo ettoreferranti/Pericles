@@ -52,7 +52,7 @@ Must · M1 · Proposed
 Must · M1 · Proposed
 - AC1: An action takes `duration × modifiers` ticks. The outputs are produced only when it completes.
 - AC2: An action is rejected if a required tool, skill, knowledge, input or location is missing, with a specific reason.
-- AC3: An interrupted action produces no outputs and returns any inputs that were not consumed.
+- AC3: An interrupted action produces no outputs and returns any inputs that were not consumed. Interruption can come from the actor, from the engine, or from another villager's `intervene` (REQ-SOC-022).
 
 ### REQ-SIM-009: Buildings and construction
 Must · M1 · Proposed

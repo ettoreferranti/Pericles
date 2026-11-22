@@ -43,6 +43,7 @@ The primary research questions the system must support:
 | 9 | Communication: pairwise dialogue + town-square board + village meetings with voting, from v1 | ADR-0009 |
 | 10 | Money = coin item minted from gold at a Mint; barter always available | ADR-0010 |
 | 11 | Agency first: laws are not blocked by default; enforcement by detection; witnessing, hearsay, reputation, villager-imposed sanctions; survival-over-society always possible | ADR-0011 |
+| 12 | Emergent institutions: generic offices, contracts, permissions, watch actions, intervention, treasury; default enforcement `by_villagers` | ADR-0012 |
 
 ## 3. Architecture
 
@@ -173,7 +174,8 @@ A law = `{id, text, author (experimenter|villagers), enacted_tick, enforcement_m
 - **Hooks** come from a fixed declarative vocabulary: `tax(source_event, pct, beneficiary)` applies automatically.
   `forbid(action, condition)` and `quota(store, item, per_day)` define what counts as a violation.
   `penalty(effect)` defines the punishment.
-- **Enforcement modes** per law: `none` (ground truth only), `on_detection` (**default**: penalty only if
+- **Enforcement modes** per law: `by_villagers` (**default**: the engine applies no penalty; only villagers can
+  sanction, through meetings, permitted office holders or informal refusal), `on_detection` (automatic penalty only if
   witnessed or reported), `certain` (penalty always, violation made public, the act still happens), and `block`
   (opt-in experimenter setting: the intent is rejected and logged as `attempted_violation`; the run is flagged as
   removing agency).
@@ -196,8 +198,28 @@ A law = `{id, text, author (experimenter|villagers), enacted_tick, enforcement_m
 - **Sanctions:** informal (refusing dialogue, trade or help: ostracism) and formal, through a `sanction`
   meeting or a law penalty: `fine`, `confiscate`, `ban(building|store)`, `exile(duration)`. Exiles can still
   forage, hunt and fish outside the village core. The accused may speak at their sanction meeting.
+- **Loss discovery:** owners (and holders of an office responsible for a communal store) notice unexplained decreases
+  when they use or inspect a store ("12 grain missing since yesterday"), without learning the culprit.
 
-### 4.8 God powers
+### 4.8 Emergent institutions (ADR-0012)
+
+The engine defines **no named institutions**. Police, judges, tax collectors or a protection racket must be invented
+by the villagers from generic building blocks:
+
+- **Offices**, created, amended and abolished by meeting vote: name, duties (free text), holders, pay per period
+  (from the communal store or a named source), term, granted permissions, removal rule. Duties are in the holder's
+  prompt but never enforced by the engine. Neglect and abuse are possible and measured.
+- **Contracts**: recurring agreements (e.g. a wage for guarding), made in dialogue or with the village in a meeting.
+  The engine evaluates fulfilment or breach per period.
+- **Permissions** granted to offices from a fixed vocabulary: `confiscate`, `fine`, `ban`, `detain`,
+  `spend_communal`. These are capabilities, not laws: without one, the mechanic is unavailable.
+- **Watch actions**: `guard(building)`, `patrol(area)`, `follow(villager)`, `keep_watch` (stay awake at night).
+  Watchers get an extended witness radius. Sleepers witness nothing.
+- **Intervention**: any adult in reach can interrupt another's multi-tick action. There is no combat in v1.
+- **Treasury**: the communal store, filled by gifts or `tax` laws and paid out through office pay or
+  `spend_communal`.
+
+### 4.9 God powers
 
 Drought (yield modifiers), raid (raider band spawns at the map edge, targets stores; palisades and
 defending villagers reduce losses; raiders leave after N ticks), epidemic (health drain, proximity
@@ -242,9 +264,10 @@ phrases. Instruction-tuned models' bias towards obedience is a finding to measur
   taught, couple formed, report or accusation made, help refused. Promises are tracked, and fulfilment or breach is an event.
 - **Town-square board:** any adult may post. Recent posts form part of perception.
 - **Meetings:** any adult may call a meeting at the town hall with a topic (proposal, law, election, communal
-  build, sanction). Attendees who choose to come speak in turns (capped), then vote. The engine resolves results:
+  build, sanction, office, contract). Attendees who choose to come speak in turns (capped), then vote. The engine resolves results:
   pass a law (author = villagers, hook only if the proposal maps onto the hook vocabulary),
-  elect a chief, approve a communal project, apply a sanction (§4.7).
+  create or abolish an office, elect or remove a holder, approve a communal project or a contract with the village,
+  apply a sanction (§4.7–4.8).
 
 ### 5.5 Executor and robustness
 
@@ -289,7 +312,8 @@ Five metric families, all derived from the event log:
    `unaware`), violations witnessed, reports and accusations (true / false / unverifiable), penalties and sanctions applied,
    attempted violations (block mode), ostracism (the change in a violator's interactions before vs. after a
    witnessed violation or accusation); promises kept/broken, cooperation acts, meetings held, laws passed,
-   leadership (elections, centrality).
+   leadership (elections, centrality); institutions: offices and their tenure, contracts and breaches, watch coverage,
+   theft rate before vs. after an office or watch appears, discovered vs. undiscovered losses, abuse of office.
 4. **Agent quality:** invalid-output rate, retries, fallback rate, plan completion rate,
    goal-action consistency, latency and tokens per decision.
 5. **Model-group dynamics:** all of the above broken down by model group in mixed runs, plus cross-group
