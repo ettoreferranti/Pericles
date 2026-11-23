@@ -16,6 +16,10 @@ from pericles.core.modifiers import Modifier
 from pericles.core.nodes import Node
 
 
+def _optional_str(value: Any) -> str | None:
+    return None if value is None else str(value)
+
+
 @dataclass
 class Activity:
     """Work in progress: an action, recipe, research or construction (ADR-0014)."""
@@ -54,6 +58,73 @@ class Activity:
 
 
 @dataclass
+class Pregnancy:
+    father: str
+    due_tick: int
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"father": self.father, "due_tick": self.due_tick}
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> Pregnancy:
+        return cls(str(data["father"]), int(data["due_tick"]))
+
+
+@dataclass(frozen=True)
+class Proposal:
+    """An open couple proposal to `target`, lapsing after `expires_tick` (ADR-0015 §6)."""
+
+    target: str
+    expires_tick: int
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"target": self.target, "expires_tick": self.expires_tick}
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> Proposal:
+        return cls(str(data["target"]), int(data["expires_tick"]))
+
+
+@dataclass(frozen=True)
+class Deceased:
+    """What the world remembers of a dead villager: lineage and the model they ran on."""
+
+    id: str
+    name: str
+    sex: str | None
+    born_tick: int
+    died_tick: int
+    cause: str
+    parents: tuple[str, ...]
+    model: str | None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "name": self.name,
+            "sex": self.sex,
+            "born_tick": self.born_tick,
+            "died_tick": self.died_tick,
+            "cause": self.cause,
+            "parents": list(self.parents),
+            "model": self.model,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> Deceased:
+        return cls(
+            id=str(data["id"]),
+            name=str(data["name"]),
+            sex=_optional_str(data["sex"]),
+            born_tick=int(data["born_tick"]),
+            died_tick=int(data["died_tick"]),
+            cause=str(data["cause"]),
+            parents=tuple(str(p) for p in data["parents"]),
+            model=_optional_str(data["model"]),
+        )
+
+
+@dataclass
 class Villager:
     id: str
     name: str
@@ -65,6 +136,19 @@ class Villager:
     knowledge: set[str] = field(default_factory=set)
     traits: tuple[str, ...] = ()
     activity: Activity | None = None
+    sex: str | None = None
+    born_tick: int = 0
+    adult: bool = True
+    needs: dict[str, float] = field(default_factory=dict)
+    damage: float = 0.0
+    home: str | None = None
+    partner: str | None = None
+    parents: tuple[str, ...] = ()
+    pregnancy: Pregnancy | None = None
+    last_birth_tick: int | None = None
+    model: str | None = None
+    witnessed: list[dict[str, Any]] = field(default_factory=list)
+    memories: list[dict[str, Any]] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -78,11 +162,26 @@ class Villager:
             "knowledge": sorted(self.knowledge),
             "traits": list(self.traits),
             "activity": None if self.activity is None else self.activity.to_dict(),
+            "sex": self.sex,
+            "born_tick": self.born_tick,
+            "adult": self.adult,
+            "needs": dict(sorted(self.needs.items())),
+            "damage": self.damage,
+            "home": self.home,
+            "partner": self.partner,
+            "parents": list(self.parents),
+            "pregnancy": None if self.pregnancy is None else self.pregnancy.to_dict(),
+            "last_birth_tick": self.last_birth_tick,
+            "model": self.model,
+            "witnessed": [dict(record) for record in self.witnessed],
+            "memories": [dict(record) for record in self.memories],
         }
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> Villager:
         activity = data["activity"]
+        pregnancy = data["pregnancy"]
+        last_birth = data["last_birth_tick"]
         return cls(
             id=str(data["id"]),
             name=str(data["name"]),
@@ -94,6 +193,19 @@ class Villager:
             knowledge={str(k) for k in data["knowledge"]},
             traits=tuple(str(t) for t in data["traits"]),
             activity=None if activity is None else Activity.from_dict(activity),
+            sex=_optional_str(data["sex"]),
+            born_tick=int(data["born_tick"]),
+            adult=bool(data["adult"]),
+            needs={str(k): float(v) for k, v in data["needs"].items()},
+            damage=float(data["damage"]),
+            home=_optional_str(data["home"]),
+            partner=_optional_str(data["partner"]),
+            parents=tuple(str(p) for p in data["parents"]),
+            pregnancy=None if pregnancy is None else Pregnancy.from_dict(pregnancy),
+            last_birth_tick=None if last_birth is None else int(last_birth),
+            model=_optional_str(data["model"]),
+            witnessed=[dict(record) for record in data["witnessed"]],
+            memories=[dict(record) for record in data["memories"]],
         )
 
 
@@ -120,6 +232,9 @@ class WorldState:
     buildings: dict[str, Building] = field(default_factory=dict)
     village_knowledge: set[str] = field(default_factory=set)
     next_building: int = 0
+    dead: dict[str, Deceased] = field(default_factory=dict)
+    proposals: dict[str, Proposal] = field(default_factory=dict)
+    next_villager: int = 0
 
     @classmethod
     def new(
@@ -161,6 +276,9 @@ class WorldState:
             "buildings": [self.buildings[k].to_dict() for k in sorted(self.buildings)],
             "village_knowledge": sorted(self.village_knowledge),
             "next_building": self.next_building,
+            "dead": [self.dead[k].to_dict() for k in sorted(self.dead)],
+            "proposals": {k: self.proposals[k].to_dict() for k in sorted(self.proposals)},
+            "next_villager": self.next_villager,
         }
 
     @classmethod
@@ -179,6 +297,9 @@ class WorldState:
             buildings={b.id: b for b in buildings},
             village_knowledge={str(k) for k in data["village_knowledge"]},
             next_building=int(data["next_building"]),
+            dead={d.id: d for d in (Deceased.from_dict(x) for x in data["dead"])},
+            proposals={str(k): Proposal.from_dict(v) for k, v in data["proposals"].items()},
+            next_villager=int(data["next_villager"]),
         )
 
     def digest(self) -> str:

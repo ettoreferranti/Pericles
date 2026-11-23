@@ -1,3 +1,5 @@
+from collections.abc import Callable
+
 import pytest
 
 from pericles.core.buildings import Building, Ownership
@@ -7,7 +9,7 @@ from pericles.core.inventory import Inventory
 from pericles.core.mapgen import TileMap
 from pericles.core.modifiers import Modifier, Op, Scope, Target
 from pericles.core.nodes import Node
-from pericles.core.state import Activity, Villager, WorldState
+from pericles.core.state import Activity, Deceased, Pregnancy, Proposal, Villager, WorldState
 
 pytestmark = pytest.mark.req("REQ-SIM-002")
 
@@ -186,3 +188,90 @@ def test_activity_target_round_trips() -> None:
     assert Activity.from_dict(with_target.to_dict()).target == "b0"
     without = Activity("action", "sow", None, 5.0, 0.0, 1.0)
     assert Activity.from_dict(without.to_dict()).target is None
+
+
+def full_villager() -> Villager:
+    return Villager(
+        "v1",
+        "Ana",
+        Coord(1, 2),
+        inventory=Inventory({"berries": 2}),
+        sex="female",
+        born_tick=-500,
+        adult=False,
+        needs={"hunger": 12.5, "cold": 3.0},
+        damage=4.0,
+        home="b0",
+        partner="v2",
+        parents=("v7", "v8"),
+        pregnancy=Pregnancy("v2", 900),
+        last_birth_tick=100,
+        model="llama",
+        witnessed=[{"tick": 3, "kind": "born", "data": {"villager": "v1"}}],
+        memories=[{"tick": 1, "kind": "died", "data": {"villager": "v9"}}],
+    )
+
+
+def test_life_fields_have_neutral_defaults() -> None:
+    """A villager built without life fields is a healthy adult of unknown sex with no family."""
+    villager = Villager("v1", "Ana", Coord(0, 0))
+    assert villager.sex is None
+    assert (villager.born_tick, villager.adult, villager.damage) == (0, True, 0.0)
+    assert villager.needs == {} and villager.parents == () and villager.witnessed == []
+    assert villager.home is None and villager.partner is None and villager.pregnancy is None
+    assert villager.last_birth_tick is None and villager.model is None and villager.memories == []
+
+
+def test_a_villager_with_life_fields_round_trips() -> None:
+    """Snapshots keep every life field (REQ-EXP-003 AC3 resume needs the full state)."""
+    villager = full_villager()
+    data = villager.to_dict()
+    assert list(data["needs"]) == ["cold", "hunger"]
+    assert Villager.from_dict(data) == villager
+
+
+def test_world_life_fields_round_trip() -> None:
+    """The dead, open proposals and the id counter survive a snapshot."""
+    tilemap = TileMap(2, 2, ["grass"] * 4, [0.0] * 4)
+    state = WorldState.new(1, tilemap, [full_villager()])
+    state.dead["v9"] = Deceased("v9", "Old", "male", -9000, 40, "old_age", ("v5",), "qwen")
+    state.dead["v3"] = Deceased("v3", "Kid", None, 10, 20, "cold", (), None)
+    state.proposals["v1"] = Proposal("v2", 70)
+    state.next_villager = 12
+    data = state.to_dict()
+    assert [d["id"] for d in data["dead"]] == ["v3", "v9"]
+    assert list(data["proposals"]) == ["v1"]
+    restored = WorldState.from_dict(data)
+    assert restored.dead == state.dead
+    assert restored.proposals == state.proposals
+    assert restored.next_villager == 12
+    assert restored.digest() == state.digest()
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        lambda v: setattr(v, "damage", 5.0),
+        lambda v: v.needs.update(hunger=13.0),
+        lambda v: setattr(v, "partner", None),
+        lambda v: setattr(v, "adult", True),
+        lambda v: setattr(v, "pregnancy", None),
+        lambda v: setattr(v, "model", "qwen"),
+        lambda v: v.witnessed.append({"tick": 4, "kind": "died", "data": {}}),
+    ],
+)
+def test_life_fields_feed_the_digest(change: Callable[[Villager], object]) -> None:
+    """Every life field is part of the canonical state."""
+    tilemap = TileMap(2, 2, ["grass"] * 4, [0.0] * 4)
+    before = WorldState.new(1, tilemap, [full_villager()])
+    after = WorldState.new(1, tilemap, [full_villager()])
+    change(after.villagers["v1"])
+    assert after.digest() != before.digest()
+
+
+def test_life_pack_loads(life: Registry) -> None:
+    """The life test pack adds needs, a hardy trait, a lodge, a cabin and a light action."""
+    assert sorted(life.needs) == ["cold", "fatigue", "hunger"]
+    assert life.needs["hunger"].relief == "eat"
+    assert life.buildings["lodge"].housing == 8
+    assert "light" in life.actions["glean"].tags

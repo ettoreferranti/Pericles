@@ -122,6 +122,43 @@ def econ(tmp_path_factory: pytest.TempPathFactory) -> Registry:
     return load_registry([root])
 
 
+LIFE_PACK = (
+    ECON_PACK
+    + """
+needs:
+  - {id: hunger, rate_per_hour: 60, damage_per_hour: 600, death_cause: starvation, relief: eat}
+  - {id: fatigue, rate_per_hour: 60, relief: sleep}
+  - {id: cold, rate_per_hour: 60, damage_per_hour: 300, death_cause: cold, relief: shelter}
+"""
+)
+"""ECON_PACK plus needs. With 1-minute ticks every need rises by exactly 1 per tick, hunger does
+10 damage per tick at critical and cold does 5, so tests can count ticks."""
+
+LIFE_EXTRA = """
+traits:
+  - id: hardy
+    description: Feels the cold less.
+    modifiers:
+      - {target: {kind: need, id: cold}, attribute: rate, op: mul, value: 0.5}
+buildings:
+  - {id: lodge, cost: {wood: 2}, build_work: 5, footprint: [2, 2], housing: 8, storage: 50}
+  - {id: cabin, cost: {wood: 1}, build_work: 2, footprint: [1, 1], housing: 5}
+actions:
+  - {id: glean, duration_ticks: 2, outputs: {berries: 1}, location: {node: bush}, tags: [light]}
+"""
+
+
+@pytest.fixture(scope="session")
+def life(tmp_path_factory: pytest.TempPathFactory) -> Registry:
+    root = tmp_path_factory.mktemp("packs")
+    base, extra = root / "life", root / "life_extra"
+    base.mkdir()
+    extra.mkdir()
+    (base / "content.yaml").write_text(LIFE_PACK, encoding="utf-8")
+    (extra / "content.yaml").write_text(LIFE_EXTRA, encoding="utf-8")
+    return load_registry([base, extra])
+
+
 TERRAIN = {".": "grass", "~": "water", "T": "forest"}
 
 
