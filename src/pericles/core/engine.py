@@ -1,14 +1,33 @@
-"""The deterministic tick loop (REQ-SIM-002, ADR-0001, ADR-0013)."""
+"""The deterministic tick loop (REQ-SIM-002, ADR-0001, ADR-0013, ADR-0014)."""
 
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
+from functools import partial
 
+from pericles.core import construction, work
+from pericles.core.config import EngineConfig
 from pericles.core.content.registry import Registry
+from pericles.core.context import Context
 from pericles.core.events import Event, EventSink
-from pericles.core.intents import Intent, MoveTo, Wait
+from pericles.core.geometry import Coord
+from pericles.core.intents import (
+    Construct,
+    Craft,
+    Deliver,
+    Deposit,
+    Intent,
+    MoveTo,
+    PlaceBuilding,
+    Research,
+    StartAction,
+    Take,
+    Wait,
+)
+from pericles.core.invariants import InvariantError, check_tick, item_totals
 from pericles.core.mapgen import TileMap
 from pericles.core.modifiers import expire
+from pericles.core.nodes import regrow
 from pericles.core.pathfinding import TerrainCostField, find_path
 from pericles.core.state import WorldState
 
@@ -16,24 +35,38 @@ Handler = Callable[[WorldState, Intent, EventSink], None]
 
 
 class Engine:
-    def __init__(self, registry: Registry) -> None:
+    def __init__(self, registry: Registry, config: EngineConfig | None = None) -> None:
         self.registry = registry
+        self.config = config if config is not None else EngineConfig()
+        self.context = Context.build(registry, self.config)
         self._handlers: dict[type[Intent], Handler] = {
             MoveTo: self._move_to,
             Wait: self._wait,
+            StartAction: partial(work.start_action, self.context),
+            PlaceBuilding: partial(construction.place_building, self.context),
+            Deliver: partial(construction.deliver, self.context),
+            Construct: partial(construction.construct, self.context),
+            Deposit: partial(construction.deposit, self.context),
+            Take: partial(construction.take, self.context),
+            Craft: partial(work.start_recipe, self.context),
+            Research: partial(work.start_research, self.context),
         }
-        self._field_map: TileMap | None = (
+        self._cache: tuple[TileMap, frozenset[Coord], TerrainCostField] | None = (
             None  # pragma: no mutate - cache sentinel; any non-matching value just forces a rebuild
-        )
-        self._field: TerrainCostField | None = (
-            None  # pragma: no mutate - cache sentinel; any non-None value just forces a rebuild
         )
 
     def register(self, intent_type: type[Intent], handler: Handler) -> None:
         self._handlers[intent_type] = handler
 
+    def interrupt(
+        self, state: WorldState, villager_id: str, sink: EventSink, cause: str = "intervened"
+    ) -> None:
+        """Interrupt a villager's work on behalf of someone else (REQ-SIM-008 AC3)."""
+        work.interrupt(self.context, state.villagers[villager_id], sink, cause=cause)
+
     def step(self, state: WorldState, intents: Sequence[Intent]) -> tuple[WorldState, list[Event]]:
         sink = EventSink(state.tick)
+        before = item_totals(state) if self.config.debug_invariants else None
         ordered = sorted(intents, key=lambda i: i.sort_key())
         state.rng.shuffle(ordered)
         acted: set[str] = set()
@@ -49,17 +82,42 @@ class Engine:
                 sink.emit("intent_rejected", actor=intent.actor, intent=intent.kind, reason=reason)
                 continue
             acted.add(intent.actor)
+            work.interrupt(self.context, state.villagers[intent.actor], sink, cause="actor")
             self._handlers[type(intent)](state, intent, sink)
+        self._advance_work(state, sink)
         self._advance_movement(state, sink)
+        if (state.tick + 1) % self.config.calendar.ticks_per_day == 0:
+            regrow(state.nodes.values(), self.registry)
         state.modifiers = expire(state.modifiers, state.tick + 1)
         state.tick += 1
+        if before is not None:
+            problems = check_tick(self.context, before, state, sink.events)
+            if problems:
+                raise InvariantError(f"tick {state.tick - 1}: " + "; ".join(problems))
         return state, sink.events
 
+    def _advance_work(self, state: WorldState, sink: EventSink) -> None:
+        for vid in sorted(state.villagers):
+            villager = state.villagers[vid]
+            activity = villager.activity
+            if activity is None:
+                continue
+            if activity.kind == "construction":
+                construction.progress(self.context, state, villager, sink)
+                continue
+            activity.done += activity.speed
+            if activity.done >= activity.work - work.EPSILON:
+                work.complete(self.context, state, villager, sink)
+
     def _cost_field(self, state: WorldState) -> TerrainCostField:
-        if self._field is None or self._field_map is not state.tilemap:
-            self._field = TerrainCostField(state.tilemap, self.registry)
-            self._field_map = state.tilemap
-        return self._field
+        """Cached per tilemap object and blocked-tile set (ADR-0014 §7)."""
+        blocked = construction.blocked_tiles(self.context, state)
+        cache = self._cache
+        if cache is not None and cache[0] is state.tilemap and cache[1] == blocked:
+            return cache[2]
+        field = TerrainCostField(state.tilemap, self.registry, blocked.__contains__)
+        self._cache = (state.tilemap, blocked, field)
+        return field
 
     def _move_to(self, state: WorldState, intent: Intent, sink: EventSink) -> None:
         assert isinstance(intent, MoveTo)

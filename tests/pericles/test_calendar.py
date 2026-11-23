@@ -113,3 +113,18 @@ def test_sun_bounds_may_touch_day_edges() -> None:
 def test_negative_tick_is_rejected() -> None:
     with pytest.raises(ValueError, match=r"^tick must be non-negative$"):
         Calendar(seasons=SEASONS).time_of(-1)
+
+
+@pytest.mark.req("REQ-SIM-003")
+def test_season_at_returns_the_season_with_its_blocked_tags() -> None:
+    """AC2: seasons carry the action tags they block, looked up by tick."""
+    winter = Season("winter", 3, blocked_tags=("sowing",))
+    calendar = Calendar(seasons=(Season("spring", 2), winter))
+    per_day = calendar.ticks_per_day
+    assert calendar.season_at(0) == Season("spring", 2)
+    assert calendar.season_at(2 * per_day) is winter
+    assert calendar.season_at(5 * per_day - 1) is winter
+    assert calendar.season_at(5 * per_day) == Season("spring", 2)
+    assert Season("x", 1).blocked_tags == ()
+    with pytest.raises(ValueError, match=r"^tick must be non-negative$"):
+        calendar.season_at(-1)

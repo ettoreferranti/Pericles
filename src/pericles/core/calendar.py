@@ -9,6 +9,7 @@ from dataclasses import dataclass
 class Season:
     name: str
     days: int
+    blocked_tags: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -48,17 +49,20 @@ class Calendar:
     def days_per_year(self) -> int:
         return sum(season.days for season in self.seasons)
 
-    def time_of(self, tick: int) -> GameTime:
+    def _locate(self, tick: int) -> tuple[int, int, int, Season, int]:
+        """(day, minute_of_day, year, season, day_of_season) for a tick."""
         if tick < 0:
             raise ValueError("tick must be non-negative")
         day, minute = divmod(tick * self.tick_minutes, self.day_minutes)
         year, day_of_year = divmod(day, self.days_per_year)
-        season, day_of_season = self.seasons[-1], 0
-        for candidate in self.seasons:
-            if day_of_year < candidate.days:
-                season, day_of_season = candidate, day_of_year
-                break
-            day_of_year -= candidate.days
+        for season in self.seasons:
+            if day_of_year < season.days:
+                return day, minute, year, season, day_of_year
+            day_of_year -= season.days
+        raise AssertionError("unreachable")  # pragma: no mutate - day_of_year < days_per_year
+
+    def time_of(self, tick: int) -> GameTime:
+        day, minute, year, season, day_of_season = self._locate(tick)
         return GameTime(
             tick=tick,
             day=day,
@@ -68,3 +72,6 @@ class Calendar:
             day_of_season=day_of_season,
             is_daytime=self.sunrise_minute <= minute < self.sunset_minute,
         )
+
+    def season_at(self, tick: int) -> Season:
+        return self._locate(tick)[3]

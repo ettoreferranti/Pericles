@@ -1,0 +1,13 @@
+buildings:
+  - {id: house, cost: {wood: 10, stone: 4}, build_work: 240, footprint: [2, 2], housing: 4, storage: 20, tags: [home]}
+  - {id: storehouse, cost: {wood: 16, stone: 8}, build_work: 360, footprint: [3, 2], storage: 300, tags: [store]}
+  - {id: farm, cost: {wood: 6}, build_work: 180, footprint: [3, 3], workers: 4, tags: [food]}
+  - {id: fishing_hut, cost: {wood: 8}, build_work: 150, footprint: [2, 1], workers: 2, storage: 30, tags: [food]}
+  - {id: lumber_camp, cost: {wood: 8}, build_work: 150, footprint: [2, 1], workers: 2, storage: 40, tags: [industry]}
+  - {id: quarry, cost: {wood: 8}, build_work: 180, footprint: [2, 2], storage: 60, tags: [industry]}
+  - {id: mine, cost: {wood: 12, stone: 6}, build_work: 300, footprint: [2, 2], storage: 60, tags: [industry]}
+  - {id: smithy, cost: {wood: 10, stone: 10}, build_work: 360, footprint: [2, 2], workers: 2, tags: [industry]}
+  - {id: mint, cost: {stone: 16, iron: 2}, build_work: 480, footprint: [2, 2], workers: 1, storage: 50, tags: [civic]}
+  - {id: town_hall, cost: {wood: 20, stone: 20}, build_work: 600, footprint: [3, 3], storage: 50, tags: [civic]}
+  - {id: palisade, cost: {wood: 2}, build_work: 20, entrance: false, tags: [defence]}
+  - {id: school, cost: {wood: 14, stone: 6}, build_work: 420, footprint: [3, 2], workers: 3, tags: [research]}

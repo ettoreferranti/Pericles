@@ -23,7 +23,7 @@ nodes:
 needs:
   - {id: hunger, rate_per_hour: 4}
 actions:
-  - {id: fell, duration_ticks: 60, inputs: {axe: 1}, outputs: {wood: 2},
+  - {id: fell, duration_ticks: 60, inputs: {wood: 2}, outputs: {wood: 2},
      location: {node: tree, terrains: [water]}, requires: {tools: [tool]}, tags: [labour]}
   - {id: craft, duration_ticks: 10, location: {building: hut}}
 buildings:
@@ -80,13 +80,13 @@ DANGLING = {
         "nodes[tree].terrains: unknown terrains id 'sand'",
     ),
     "action-input": (
-        "inputs: {axe: 1}",
+        "inputs: {wood: 2}",
         "inputs: {rock: 1}",
         "actions[fell].inputs: unknown items id 'rock'",
     ),
     "action-output": (
         "outputs: {wood: 2}",
-        "outputs: {gold: 2}",
+        "outputs: {wood: 2, gold: 2}",
         "actions[fell].outputs: unknown items id 'gold'",
     ),
     "action-node": (
@@ -243,3 +243,52 @@ def test_core_has_no_hard_coded_content_ids(registry: Registry) -> None:
             if isinstance(node, ast.Constant) and isinstance(node.value, str) and node.value in ids:
                 offenders.append(f"{path.relative_to(CORE)}:{node.lineno}: {node.value!r}")
     assert offenders == []
+
+
+@pytest.mark.req("REQ-SIM-007")
+def test_node_actions_must_output_the_node_yield(tmp_path: Path) -> None:
+    """AC1: harvesting draws on a node's stock, so its action must output the node's item."""
+    pack = tmp_path / "pack"
+    pack.mkdir()
+    (pack / "content.yaml").write_text(
+        """
+terrains:
+  - {id: grass, walkable: true, color: "#8fb35a"}
+items:
+  - {id: wood}
+  - {id: stone}
+nodes:
+  - {id: tree, yields: wood, terrains: [grass], density: 0.1, stock: 5}
+actions:
+  - {id: chop, duration_ticks: 5, outputs: {stone: 1}, location: {node: tree}}
+""",
+        encoding="utf-8",
+    )
+    with pytest.raises(
+        ContentError,
+        match=r"actions\[chop\]\.outputs: must include 'wood', the yield of node 'tree'",
+    ):
+        load_registry([pack])
+
+
+@pytest.mark.req("REQ-SIM-010")
+def test_an_action_cannot_consume_the_tool_it_requires(tmp_path: Path) -> None:
+    """AC1: an input that satisfies a required tool tag would be reserved away; reject it."""
+    pack = make_pack(
+        tmp_path,
+        "pack",
+        """
+terrains:
+  - {id: grass, walkable: true, color: "#8fb35a"}
+items:
+  - {id: axe, tags: [tool]}
+actions:
+  - {id: swing, duration_ticks: 5, inputs: {axe: 1}, requires: {tools: [tool]}}
+""",
+    )
+    with pytest.raises(
+        ContentError,
+        match=r"actions\[swing\]\.inputs: 'axe' is consumed but also satisfies "
+        r"the required tool tag 'tool'",
+    ):
+        load_registry([pack])

@@ -5,6 +5,7 @@ import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
+from pericles.core.config import EngineConfig
 from pericles.core.content.registry import Registry, base_pack_path, load_registry
 from pericles.core.engine import Engine
 from pericles.core.events import Event, EventSink
@@ -346,3 +347,10 @@ def test_cost_field_is_cached_per_tilemap(registry: Registry) -> None:
     assert engine._cost_field(state) is first
     state.tilemap = TileMap(2, 1, ["grass", "grass"], [0.0] * 2)
     assert engine._cost_field(state) is not first
+
+
+def test_engine_uses_the_default_config(registry: Registry) -> None:
+    engine = Engine(registry)
+    assert engine.config == EngineConfig()
+    assert engine.context.config is engine.config
+    assert engine.context.registry is registry
