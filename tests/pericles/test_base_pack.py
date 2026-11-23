@@ -22,6 +22,8 @@ BUILDINGS = {
     "town_hall",
     "palisade",
     "school",
+    "mill",
+    "bakery",
 }
 
 
@@ -31,7 +33,7 @@ def grass_world(villagers: list[Villager]) -> WorldState:
 
 @pytest.mark.req("REQ-SIM-009")
 def test_base_pack_has_the_v1_buildings(registry: Registry) -> None:
-    """AC4: the base pack includes the twelve v1 buildings."""
+    """AC4: the base pack includes the fourteen v1 buildings, mill and bakery among them."""
     assert set(registry.buildings) == BUILDINGS
     assert registry.buildings["palisade"].entrance is False
     assert registry.buildings["house"].housing > 0
@@ -107,3 +109,40 @@ def test_a_farm_hosts_four_farmers(registry: Registry) -> None:
         for n in names
     ]
     assert kinds == [None, None, None, None, "building_full"]
+
+
+@pytest.mark.req("REQ-SIM-009")
+def test_grain_becomes_flour_becomes_bread(registry: Registry) -> None:
+    """AC4: the mill grinds grain into flour and the bakery bakes it into bread."""
+    grind, bake = registry.recipes["grind_flour"], registry.recipes["bake_bread"]
+    assert (grind.building, dict(grind.inputs), dict(grind.outputs)) == (
+        "mill",
+        {"grain": 3},
+        {"flour": 2},
+    )
+    assert (bake.building, dict(bake.inputs), dict(bake.outputs)) == (
+        "bakery",
+        {"flour": 2, "wood": 1},
+        {"bread": 2},
+    )
+    assert registry.items["grain"].nutrition == 3
+    assert registry.items["bread"].nutrition == 20
+    assert registry.items["flour"].nutrition == 0
+    # Processing pays: 3 grain (9 nutrition) become 2 bread (40).
+    assert 2 * registry.items["bread"].nutrition > 3 * registry.items["grain"].nutrition
+
+
+@pytest.mark.req("REQ-SIM-012")
+def test_base_needs_damage_and_relief(registry: Registry) -> None:
+    """AC1/AC2: hunger and cold can kill (starvation, cold); fatigue is relieved by sleep."""
+    needs = registry.needs
+    assert (needs["hunger"].relief, needs["hunger"].death_cause) == ("eat", "starvation")
+    assert (needs["cold"].relief, needs["cold"].death_cause) == ("shelter", "cold")
+    assert (needs["fatigue"].relief, needs["fatigue"].damage_per_hour) == ("sleep", 0.0)
+
+
+@pytest.mark.req("REQ-SIM-016")
+def test_children_can_gather_berries(registry: Registry) -> None:
+    """AC1: berry gathering is light work, the one base action children may do."""
+    light = sorted(a.id for a in registry.actions.values() if "light" in a.tags)
+    assert light == ["gather_berries"]

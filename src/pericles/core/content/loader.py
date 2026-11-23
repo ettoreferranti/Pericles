@@ -54,7 +54,7 @@ def load_pack(path: Path) -> Pack:
         raise ContentError(f"{path}: content pack has no .yaml files")
     defs: dict[str, dict[str, Model]] = {section: {} for section in SECTIONS}
     for file in files:
-        raw = _read_yaml(file)
+        raw = read_yaml(file)
         try:
             parsed = PackFile.model_validate(raw)
         except ValidationError as exc:
@@ -70,7 +70,7 @@ def load_pack(path: Path) -> Pack:
     return Pack(name=path.name, path=path, defs=defs)
 
 
-def _read_yaml(file: Path) -> dict[str, Any]:
+def read_yaml(file: Path) -> dict[str, Any]:
     try:
         raw = yaml.load(file.read_text(encoding="utf-8"), Loader=_UniqueKeyLoader)
     except _DuplicateKeyError as exc:

@@ -21,7 +21,7 @@ def test_create_writes_layout(tmp_path: Path) -> None:
     root = tmp_path / "run1"
     assert yaml.safe_load((root / "config.yaml").read_text(encoding="utf-8")) == CONFIG
     meta = json.loads((root / "meta.json").read_text(encoding="utf-8"))
-    assert meta["schema_version"] == RunDirectory.SCHEMA_VERSION
+    assert meta["schema_version"] == RunDirectory.SCHEMA_VERSION == 2  # life fields in snapshots
     assert meta["seed"] == 9
     assert meta["pericles_version"] == pericles.__version__
     assert "created_utc" in meta and "python" in meta

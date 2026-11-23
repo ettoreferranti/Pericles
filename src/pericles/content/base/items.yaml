@@ -1,6 +1,8 @@
 items:
   - {id: berries, weight: 0.2, nutrition: 15, tags: [food]}
-  - {id: grain, weight: 0.5, nutrition: 10, tags: [food]}
+  - {id: grain, weight: 0.5, nutrition: 3, tags: [food]}
+  - {id: flour, weight: 0.5, tags: [material]}
+  - {id: bread, weight: 0.3, nutrition: 20, tags: [food]}
   - {id: meat, weight: 1.0, nutrition: 30, tags: [food]}
   - {id: fish, weight: 0.8, nutrition: 25, tags: [food]}
   - {id: wood, weight: 2.0, tags: [material]}

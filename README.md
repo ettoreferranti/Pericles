@@ -8,7 +8,7 @@ experimenter can change during a run.
 - Requirements: [docs/requirements/](docs/requirements/README.md)
 - Architecture decisions: [docs/adr/](docs/adr/README.md)
 
-Status: M1b Work and economy complete; M1c Life and population next.
+Status: M1c Life and population complete; M1d Running villages next.
 
 ## Development
 

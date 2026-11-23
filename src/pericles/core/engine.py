@@ -5,21 +5,26 @@ from __future__ import annotations
 from collections.abc import Callable, Sequence
 from functools import partial
 
-from pericles.core import construction, work
+from pericles.core import construction, life, lifecycle, work
 from pericles.core.config import EngineConfig
 from pericles.core.content.registry import Registry
 from pericles.core.context import Context
 from pericles.core.events import Event, EventSink
 from pericles.core.geometry import Coord
 from pericles.core.intents import (
+    AcceptCouple,
     Construct,
     Craft,
     Deliver,
     Deposit,
+    Eat,
     Intent,
     MoveTo,
     PlaceBuilding,
+    ProposeCouple,
     Research,
+    SetHome,
+    Sleep,
     StartAction,
     Take,
     Wait,
@@ -50,6 +55,11 @@ class Engine:
             Take: partial(construction.take, self.context),
             Craft: partial(work.start_recipe, self.context),
             Research: partial(work.start_research, self.context),
+            Eat: partial(life.eat, self.context),
+            Sleep: partial(life.sleep, self.context),
+            SetHome: partial(lifecycle.set_home, self.context),
+            ProposeCouple: partial(lifecycle.propose_couple, self.context),
+            AcceptCouple: partial(lifecycle.accept_couple, self.context),
         }
         self._cache: tuple[TileMap, frozenset[Coord], TerrainCostField] | None = (
             None  # pragma: no mutate - cache sentinel; any non-matching value just forces a rebuild
@@ -63,6 +73,10 @@ class Engine:
     ) -> None:
         """Interrupt a villager's work on behalf of someone else (REQ-SIM-008 AC3)."""
         work.interrupt(self.context, state.villagers[villager_id], sink, cause=cause)
+
+    def kill(self, state: WorldState, villager_id: str, cause: str, sink: EventSink) -> None:
+        """Kill a villager (god powers, interventions, tests); the usual death rules apply."""
+        lifecycle.die(self.context, state, villager_id, cause, sink)
 
     def step(self, state: WorldState, intents: Sequence[Intent]) -> tuple[WorldState, list[Event]]:
         sink = EventSink(state.tick)
@@ -78,6 +92,11 @@ class Engine:
                 reason = "duplicate_intent"
             elif type(intent) not in self._handlers:
                 reason = "unknown_intent"
+            elif (
+                not state.villagers[intent.actor].adult
+                and intent.kind not in self.config.child_intents
+            ):
+                reason = "too_young"
             if reason is not None:
                 sink.emit("intent_rejected", actor=intent.actor, intent=intent.kind, reason=reason)
                 continue
@@ -86,8 +105,16 @@ class Engine:
             self._handlers[type(intent)](state, intent, sink)
         self._advance_work(state, sink)
         self._advance_movement(state, sink)
+        for vid, cause in life.update_needs(self.context, state, sink):
+            lifecycle.die(self.context, state, vid, cause, sink)
+        lifecycle.births(self.context, state, sink)
+        lifecycle.expire_proposals(state, sink)
         if (state.tick + 1) % self.config.calendar.ticks_per_day == 0:
             regrow(state.nodes.values(), self.registry)
+            lifecycle.old_age_deaths(self.context, state, sink)
+            lifecycle.come_of_age(self.context, state, sink)
+            lifecycle.conceive(self.context, state, sink)
+        lifecycle.witness(self.context, state, sink.events)
         state.modifiers = expire(state.modifiers, state.tick + 1)
         state.tick += 1
         if before is not None:
@@ -101,6 +128,8 @@ class Engine:
             villager = state.villagers[vid]
             activity = villager.activity
             if activity is None:
+                continue
+            if activity.kind == life.SLEEP:
                 continue
             if activity.kind == "construction":
                 construction.progress(self.context, state, villager, sink)

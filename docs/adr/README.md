@@ -18,5 +18,6 @@ Format: Michael Nygard. New ADRs get the next number. Superseded ADRs stay, with
 | [0012](0012-emergent-institutions.md) | Emergent institutions from generic building blocks | Accepted |
 | [0013](0013-engine-kernel-conventions.md) | Engine kernel conventions | Accepted |
 | [0014](0014-gameplay-state-model.md) | Gameplay state model | Accepted |
+| [0015](0015-life-and-population.md) | Life and population | Accepted |
 
 Template: copy any ADR and keep the sections Context / Decision / Consequences.

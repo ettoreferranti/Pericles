@@ -11,3 +11,5 @@ buildings:
   - {id: town_hall, cost: {wood: 20, stone: 20}, build_work: 600, footprint: [3, 3], storage: 50, tags: [civic]}
   - {id: palisade, cost: {wood: 2}, build_work: 20, entrance: false, tags: [defence]}
   - {id: school, cost: {wood: 14, stone: 6}, build_work: 420, footprint: [3, 2], workers: 3, tags: [research]}
+  - {id: mill, cost: {wood: 12, stone: 6}, build_work: 300, footprint: [2, 2], workers: 2, storage: 40, tags: [food]}
+  - {id: bakery, cost: {wood: 10, stone: 8}, build_work: 300, footprint: [2, 2], workers: 2, storage: 30, tags: [food]}

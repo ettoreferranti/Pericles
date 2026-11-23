@@ -5,3 +5,5 @@ recipes:
   - {id: forge_axe, building: smithy, inputs: {iron: 1, wood: 1}, outputs: {axe: 1}, work_ticks: 90, skill: smithing}
   - {id: forge_pickaxe, building: smithy, inputs: {iron: 2, wood: 1}, outputs: {pickaxe: 1}, work_ticks: 120, skill: smithing}
   - {id: mint_coins, building: mint, inputs: {gold_ore: 1}, outputs: {coin: 20}, work_ticks: 60, skill: minting}
+  - {id: grind_flour, building: mill, inputs: {grain: 3}, outputs: {flour: 2}, work_ticks: 40, skill: milling}
+  - {id: bake_bread, building: bakery, inputs: {flour: 2, wood: 1}, outputs: {bread: 2}, work_ticks: 60, skill: baking}

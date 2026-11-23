@@ -2,6 +2,7 @@ import random
 import re
 from collections import deque
 from dataclasses import replace
+from typing import Any
 
 import pytest
 
@@ -139,12 +140,12 @@ def test_golden_map_digest(registry: Registry, map_params: MapParams) -> None:
 
 def test_value_noise_golden_values() -> None:
     """AC1: noise is pinned for several octaves, including octaves whose cell size reaches 1."""
-    a = value_noise(random.Random(1), 5, 4, 2, 3)
+    a = value_noise(random.Random(1), 5, 4, 2, 3, persistence=0.5, lacunarity=2)
     assert a[:4] == pytest.approx(
         [0.2560550952206876, 0.6097787646439838, 0.7665138949358499, 0.5474850627547078]
     )
     assert a[-1] == pytest.approx(0.7038264769912655)
-    b = value_noise(random.Random(1), 3, 3, 1, 6)
+    b = value_noise(random.Random(1), 3, 3, 1, 6, persistence=0.5, lacunarity=2)
     assert b[:4] == pytest.approx(
         [0.2536509619027013, 0.577034648626269, 0.5891847802397457, 0.43208649189041837]
     )
@@ -259,3 +260,35 @@ def test_tolerance_boundaries_are_inclusive(registry: Registry, map_params: MapP
     over = (Vein("iron_vein", 0.5 + 2 * _EPS, "rock"),)
     with pytest.raises(ValueError, match="more than their host"):
         generate_map(0, replace(map_params, bands=bands, veins=over), registry)
+
+
+@pytest.mark.parametrize(
+    ("change", "message"),
+    [
+        ({"persistence": 0.0}, r"^persistence must be in \(0, 1\]$"),
+        ({"persistence": 1.5}, r"^persistence must be in \(0, 1\]$"),
+        ({"lacunarity": 0}, "^lacunarity must be at least 1$"),
+        ({"vein_feature_divisor": 0}, "^vein_feature_divisor must be at least 1$"),
+    ],
+)
+def test_noise_parameters_are_validated(
+    map_params: MapParams, registry: Registry, change: dict[str, Any], message: str
+) -> None:
+    """AC1: The noise tuning values are parameters, validated like the others."""
+    with pytest.raises(ValueError, match=message):
+        generate_map(7, replace(map_params, **change), registry)
+
+
+def test_noise_parameters_change_the_map(map_params: MapParams, registry: Registry) -> None:
+    """AC1: Persistence really feeds the noise (it is not a dead parameter)."""
+    base = generate_map(7, map_params, registry).digest()
+    rougher = generate_map(7, replace(map_params, persistence=0.9), registry).digest()
+    assert rougher != base
+
+
+def test_noise_parameters_accept_their_lower_bounds(
+    map_params: MapParams, registry: Registry
+) -> None:
+    """AC1: The bounds are inclusive: persistence 1, lacunarity 1 and divisor 1 are valid."""
+    edge = replace(map_params, persistence=1.0, lacunarity=1, vein_feature_divisor=1)
+    assert generate_map(7, edge, registry).width == map_params.width
