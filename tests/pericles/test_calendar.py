@@ -3,6 +3,7 @@ import re
 import pytest
 
 from pericles.core.calendar import Calendar, GameTime, Season
+from pericles.core.modifiers import Modifier, Op, Target
 
 SEASONS = (Season("spring", 2), Season("summer", 2), Season("autumn", 1), Season("winter", 3))
 
@@ -128,3 +129,12 @@ def test_season_at_returns_the_season_with_its_blocked_tags() -> None:
     assert Season("x", 1).blocked_tags == ()
     with pytest.raises(ValueError, match=r"^tick must be non-negative$"):
         calendar.season_at(-1)
+
+
+@pytest.mark.req("REQ-SIM-012")
+def test_seasons_carry_modifiers() -> None:
+    """Seasons hold the modifiers they apply (ADR-0015 §1); none by default."""
+    assert Season("spring", 10).modifiers == ()
+    cold = Modifier(Target("need", "cold"), "rate", Op.MUL, 4.0, "season:winter")
+    winter = Season("winter", 10, blocked_tags=("sowing",), modifiers=(cold,))
+    assert Calendar(seasons=(winter,)).season_at(0).modifiers == (cold,)

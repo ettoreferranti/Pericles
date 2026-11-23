@@ -82,6 +82,9 @@ class NeedDef(Model):
     id: Id
     rate_per_hour: NonNegative
     critical: Float = Field(default=100.0, gt=0, le=100)
+    damage_per_hour: NonNegative = 0.0
+    death_cause: Id | None = None
+    relief: Literal["eat", "sleep", "shelter"] | None = None
 
 
 class RequiresDef(Model):

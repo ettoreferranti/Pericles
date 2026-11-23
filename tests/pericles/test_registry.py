@@ -292,3 +292,59 @@ actions:
         r"the required tool tag 'tool'",
     ):
         load_registry([pack])
+
+
+@pytest.mark.req("REQ-SIM-012")
+def test_need_fields_parse(tmp_path: Path) -> None:
+    """Needs carry damage, a death cause and a relief kind (ADR-0015 §1 and §2)."""
+    root = tmp_path / "p"
+    root.mkdir()
+    (root / "content.yaml").write_text(
+        "needs:\n"
+        "  - {id: hunger, rate_per_hour: 4, damage_per_hour: 5, death_cause: starvation,"
+        " relief: eat}\n"
+        "  - {id: fatigue, rate_per_hour: 6, relief: sleep}\n",
+        encoding="utf-8",
+    )
+    registry = load_registry([root])
+    hunger = registry.needs["hunger"]
+    assert (hunger.damage_per_hour, hunger.death_cause, hunger.relief) == (5.0, "starvation", "eat")
+    fatigue = registry.needs["fatigue"]
+    assert (fatigue.damage_per_hour, fatigue.death_cause, fatigue.relief) == (0.0, None, "sleep")
+
+
+@pytest.mark.req("REQ-SIM-012")
+def test_a_damaging_need_must_name_a_death_cause(tmp_path: Path) -> None:
+    """A need that can kill must say what the death is called (ADR-0015 §2)."""
+    root = tmp_path / "p"
+    root.mkdir()
+    (root / "content.yaml").write_text(
+        "needs:\n  - {id: hunger, rate_per_hour: 4, damage_per_hour: 5}\n", encoding="utf-8"
+    )
+    with pytest.raises(
+        ContentError,
+        match=r"p: needs\[hunger\]\.death_cause: a need that does damage needs a death_cause",
+    ):
+        load_registry([root])
+
+
+@pytest.mark.req("REQ-SIM-012")
+def test_an_unknown_relief_kind_is_rejected(tmp_path: Path) -> None:
+    """Relief is one of eat, sleep or shelter."""
+    root = tmp_path / "p"
+    root.mkdir()
+    (root / "content.yaml").write_text(
+        "needs:\n  - {id: hunger, rate_per_hour: 4, relief: pray}\n", encoding="utf-8"
+    )
+    with pytest.raises(ContentError, match="relief"):
+        load_registry([root])
+
+
+@pytest.mark.req("REQ-SIM-012")
+def test_a_small_positive_damage_still_needs_a_death_cause(tmp_path: Path) -> None:
+    """Any damage above zero needs a death cause; zero damage does not."""
+    root = make_pack(
+        tmp_path, "p", "needs:\n  - {id: hunger, rate_per_hour: 4, damage_per_hour: 0.5}\n"
+    )
+    with pytest.raises(ContentError, match="a need that does damage needs a death_cause"):
+        load_registry([root])

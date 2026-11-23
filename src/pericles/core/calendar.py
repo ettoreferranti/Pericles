@@ -4,12 +4,15 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from pericles.core.modifiers import Modifier
+
 
 @dataclass(frozen=True)
 class Season:
     name: str
     days: int
     blocked_tags: tuple[str, ...] = ()
+    modifiers: tuple[Modifier, ...] = ()
 
 
 @dataclass(frozen=True)

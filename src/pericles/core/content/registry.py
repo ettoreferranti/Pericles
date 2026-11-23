@@ -143,6 +143,12 @@ def check_references(registry: Registry) -> list[str]:
     for ident, node in registry.nodes.items():
         refs("nodes", ident, "yields", "items", [node.yields])
         refs("nodes", ident, "terrains", "terrains", node.terrains)
+    for ident, need in registry.needs.items():
+        if need.damage_per_hour > 0 and need.death_cause is None:
+            problems.append(
+                f"{where('needs', ident, 'death_cause')}: a need that does damage needs a "
+                "death_cause"
+            )
     for ident, item in registry.items.items():
         modifiers("items", ident, item.modifiers)
     for ident, action in registry.actions.items():
