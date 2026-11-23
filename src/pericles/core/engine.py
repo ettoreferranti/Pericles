@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable, Sequence
 from functools import partial
 
-from pericles.core import construction, life, work
+from pericles.core import construction, life, lifecycle, work
 from pericles.core.config import EngineConfig
 from pericles.core.content.registry import Registry
 from pericles.core.context import Context
@@ -68,6 +68,10 @@ class Engine:
         """Interrupt a villager's work on behalf of someone else (REQ-SIM-008 AC3)."""
         work.interrupt(self.context, state.villagers[villager_id], sink, cause=cause)
 
+    def kill(self, state: WorldState, villager_id: str, cause: str, sink: EventSink) -> None:
+        """Kill a villager (god powers, interventions, tests); the usual death rules apply."""
+        lifecycle.die(self.context, state, villager_id, cause, sink)
+
     def step(self, state: WorldState, intents: Sequence[Intent]) -> tuple[WorldState, list[Event]]:
         sink = EventSink(state.tick)
         before = item_totals(state) if self.config.debug_invariants else None
@@ -90,9 +94,11 @@ class Engine:
             self._handlers[type(intent)](state, intent, sink)
         self._advance_work(state, sink)
         self._advance_movement(state, sink)
-        life.update_needs(self.context, state, sink)
+        for vid, cause in life.update_needs(self.context, state, sink):
+            lifecycle.die(self.context, state, vid, cause, sink)
         if (state.tick + 1) % self.config.calendar.ticks_per_day == 0:
             regrow(state.nodes.values(), self.registry)
+            lifecycle.old_age_deaths(self.context, state, sink)
         state.modifiers = expire(state.modifiers, state.tick + 1)
         state.tick += 1
         if before is not None:
