@@ -1,0 +1,41 @@
+# Playable defaults for every engine parameter (ADR-0015 §11). Copy this file to tweak a run.
+engine:
+  calendar:
+    tick_minutes: 1
+    day_minutes: 1440
+    sunrise_minute: 360
+    sunset_minute: 1200
+    seasons:
+      - {name: spring, days: 10}
+      - {name: summer, days: 10}
+      - {name: autumn, days: 10}
+      - {name: winter, days: 10, blocked_tags: [sowing]}
+  carry_limit: 30.0
+  max_skill: 100.0
+  skill_practice: 1.0
+  skill_speed_per_level: 0.005
+  debug_invariants: false
+  max_health: 100.0
+  health_regen_per_hour: 1.0
+  sleep_relief_per_hour: 12.0
+  home_sleep_multiplier: 2.0
+  shelter_relief_per_hour: 20.0
+  sexes: [female, male]
+  bearing_sex: female
+  adult_age_days: 120
+  old_age_days: 600
+  old_age_death_chance: 0.002
+  old_age_death_growth: 1.02
+  gestation_days: 10
+  birth_interval_days: 10
+  conception_chance_per_day: 0.2
+  birth_food_per_capita: 50.0
+  couple_proposal_ttl_ticks: 60
+  model_rule: inherit
+  adult_model: null
+  child_names: []
+  child_intents: [move_to, wait, start_action, eat, sleep, take, deposit]
+  child_action_tags: [light]
+  family_events: [born, died, couple_formed, came_of_age]
+  village_events: [building_completed, technology_learned]
+  childhood_memory_limit: 20

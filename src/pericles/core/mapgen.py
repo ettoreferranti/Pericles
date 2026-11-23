@@ -39,6 +39,9 @@ class MapParams:
     start_radius: int = 8
     feature_size: int = 16
     octaves: int = 3
+    persistence: float = 0.5
+    lacunarity: int = 2
+    vein_feature_divisor: int = 2
 
 
 class TileMap:
@@ -100,7 +103,14 @@ def _smooth(t: float) -> float:
 
 
 def value_noise(
-    rng: random.Random, width: int, height: int, feature_size: int, octaves: int
+    rng: random.Random,
+    width: int,
+    height: int,
+    feature_size: int,
+    octaves: int,
+    *,
+    persistence: float,
+    lacunarity: int,
 ) -> list[float]:
     """Multi-octave value noise in [0, 1], fully determined by `rng`."""
     result = [0.0] * (width * height)
@@ -121,8 +131,8 @@ def value_noise(
                 bottom = lattice[i + grid_w] + (lattice[i + grid_w + 1] - lattice[i + grid_w]) * tx
                 result[y * width + x] += amplitude * (top + (bottom - top) * ty)
         total += amplitude
-        amplitude *= 0.5
-        cell //= 2
+        amplitude *= persistence
+        cell //= lacunarity
     return [v / total for v in result]
 
 
@@ -135,6 +145,12 @@ def _validate(params: MapParams, registry: Registry) -> None:
         raise ValueError("feature_size must be at least 1")
     if params.octaves < 1:
         raise ValueError("octaves must be at least 1")
+    if not 0 < params.persistence <= 1:
+        raise ValueError("persistence must be in (0, 1]")
+    if params.lacunarity < 1:
+        raise ValueError("lacunarity must be at least 1")
+    if params.vein_feature_divisor < 1:
+        raise ValueError("vein_feature_divisor must be at least 1")
     if not params.bands:
         raise ValueError("map needs at least one band")
     shares = [b.share for b in params.bands] + [v.share for v in params.veins]
@@ -168,7 +184,15 @@ def generate_map(seed: int, params: MapParams, registry: Registry) -> TileMap:
     width, height = params.width, params.height
     n = width * height
     rng = random.Random(seed)
-    elevation = value_noise(rng, width, height, params.feature_size, params.octaves)
+    elevation = value_noise(
+        rng,
+        width,
+        height,
+        params.feature_size,
+        params.octaves,
+        persistence=params.persistence,
+        lacunarity=params.lacunarity,
+    )
     order = sorted(range(n), key=lambda i: (elevation[i], i))
     terrain = [""] * n  # pragma: no mutate  (placeholder; every tile is reassigned)
     start, cumulative = 0, 0.0
@@ -179,7 +203,15 @@ def generate_map(seed: int, params: MapParams, registry: Registry) -> TileMap:
             terrain[i] = band.terrain
         start = max(start, end)
     for vein in params.veins:
-        noise = value_noise(rng, width, height, max(1, params.feature_size // 2), params.octaves)
+        noise = value_noise(
+            rng,
+            width,
+            height,
+            max(1, params.feature_size // params.vein_feature_divisor),
+            params.octaves,
+            persistence=params.persistence,
+            lacunarity=params.lacunarity,
+        )
         hosts = sorted(
             (i for i in range(n) if terrain[i] == vein.host), key=lambda i: (-noise[i], i)
         )
