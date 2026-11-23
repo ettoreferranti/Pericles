@@ -187,6 +187,8 @@ def propose_couple(ctx: Context, state: WorldState, intent: Intent, sink: EventS
     assert isinstance(intent, ProposeCouple)
     actor = state.villagers[intent.actor]
     target = state.villagers.get(intent.target)
+    if not actor.adult:
+        return reject(sink, intent, "too_young")
     if target is None:
         return reject(sink, intent, "unknown_target")
     if target.id == actor.id:
@@ -210,6 +212,10 @@ def accept_couple(ctx: Context, state: WorldState, intent: Intent, sink: EventSi
     if proposal is None or proposal.target != actor.id or state.tick >= proposal.expires_tick:
         return reject(sink, intent, "no_proposal")
     proposer = state.villagers[intent.proposer]
+    if not actor.adult:
+        return reject(sink, intent, "too_young")
+    if not proposer.adult:
+        return reject(sink, intent, "target_too_young")
     if actor.partner is not None:
         return reject(sink, intent, "already_partnered")
     if proposer.partner is not None:

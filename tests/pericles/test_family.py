@@ -456,3 +456,30 @@ def test_a_birth_event_names_everyone_and_ids_step_by_one(
     assert state.villagers["v1"].name == "v1"
     assert state.villagers["v1"].sex in engine.config.sexes
     assert state.villagers["v1"].id == "v1"
+
+
+@pytest.mark.req("REQ-SIM-015")
+@pytest.mark.parametrize(
+    ("proposal_from", "intent", "reason"),
+    [
+        (None, ProposeCouple("kid", "a"), "too_young"),
+        ("kid", AcceptCouple("a", "kid"), "target_too_young"),
+        ("a", AcceptCouple("kid", "a"), "too_young"),
+    ],
+)
+def test_children_cannot_form_couples(
+    life: Registry,
+    make_world: MakeWorld,
+    proposal_from: str | None,
+    intent: ProposeCouple | AcceptCouple,
+    reason: str,
+) -> None:
+    """AC1: only two adults can be a couple, whoever proposes or accepts."""
+    state = make_world(ROWS, [adult("a"), adult("kid", "male", adult=False)])
+    if proposal_from is not None:
+        target = "a" if proposal_from == "kid" else "kid"
+        state.proposals[proposal_from] = Proposal(target, 99)
+    _, events = Engine(life).step(state, [intent])
+    assert rejected(events) == [reason]
+    assert state.villagers["a"].partner is None
+    assert state.villagers["kid"].partner is None
