@@ -129,4 +129,4 @@ def fits(
     freed: float = 0.0,
 ) -> bool:
     total = inventory.weight(registry) - freed + bundle_weight(registry, bundle)
-    return total <= limit + EPSILON  # pragma: no mutate - boundary is within float noise
+    return total <= limit + EPSILON

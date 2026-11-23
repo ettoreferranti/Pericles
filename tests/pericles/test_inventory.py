@@ -6,6 +6,7 @@ from hypothesis import strategies as st
 
 from pericles.core.content.registry import Registry
 from pericles.core.inventory import (
+    EPSILON,
     UNLIMITED,
     Inventory,
     InventoryError,
@@ -163,3 +164,18 @@ def test_quantities_never_go_negative(econ: Registry, ops: list[tuple[str, int, 
     assert all(n > 0 for n in inv.items.values())
     assert all(tool.durability > 0 for tool in inv.tools)
     assert +inv.totals() == +expected
+
+
+def test_fits_tolerates_float_noise_but_not_real_excess(econ: Registry) -> None:
+    """AC2: 3 seeds weigh 0.30000000000000004 and still fit a 0.3 limit; a 4th does not."""
+    inv = Inventory()
+    inv.add(econ, "seed", 3)
+    assert fits(econ, inv, {}, 0.3)
+    assert fits(econ, Inventory(), {"seed": 3}, 0.3)
+    assert not fits(econ, Inventory(), {"seed": 4}, 0.3)
+    assert not fits(econ, Inventory(), {"wood": 1}, 1.99)
+
+
+def test_fits_boundary_is_inclusive(econ: Registry) -> None:
+    """AC2: a total exactly at the tolerance edge (limit + EPSILON) still fits."""
+    assert fits(econ, Inventory(), {}, -EPSILON)
