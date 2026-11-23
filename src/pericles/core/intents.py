@@ -73,3 +73,17 @@ class Take(Intent):
     item: str
     qty: int
     kind: ClassVar[str] = "take"
+
+
+@dataclass(frozen=True)
+class Craft(Intent):
+    recipe: str
+    building: str
+    kind: ClassVar[str] = "craft"
+
+
+@dataclass(frozen=True)
+class Research(Intent):
+    technology: str
+    building: str
+    kind: ClassVar[str] = "research"

@@ -5,10 +5,10 @@ from __future__ import annotations
 import math
 from collections.abc import Callable, Iterable, Mapping
 
-from pericles.core.buildings import building_tiles, near
+from pericles.core.buildings import Building, building_tiles, near
 from pericles.core.context import Context, knows, reject
 from pericles.core.events import EventSink
-from pericles.core.intents import Intent, StartAction
+from pericles.core.intents import Craft, Intent, Research, StartAction
 from pericles.core.inventory import (
     EPSILON as EPSILON,
 )
@@ -17,10 +17,13 @@ from pericles.core.inventory import (
     Tool,
     bundle_weight,
     capacity_for,
+    fits,
     transfer,
 )
-from pericles.core.modifiers import Modifier, Op, Target, resolve
+from pericles.core.modifiers import Modifier, Op, Scope, Target, resolve
 from pericles.core.state import Activity, Villager, WorldState
+
+WORKPLACE_KINDS = ("recipe", "research")
 
 Finisher = Callable[[Context, WorldState, Villager, Activity, EventSink], None]
 
@@ -225,6 +228,127 @@ def start_action(ctx: Context, state: WorldState, intent: Intent, sink: EventSin
     )
 
 
+def workplace(
+    ctx: Context,
+    state: WorldState,
+    villager: Villager,
+    intent: Intent,
+    building_id: str,
+    kind: str,
+    sink: EventSink,
+) -> Building | None:
+    """A complete building of `kind`, within reach and with a free workplace, or None."""
+    building = state.buildings.get(building_id)
+    if building is None or building.kind != kind:
+        problem = "bad_target"
+    elif not building.complete:
+        problem = "incomplete"
+    elif not near(villager.pos, building_tiles(building, ctx.registry)):
+        problem = "not_at_location"
+    elif _workers(state, building.id) >= ctx.registry.buildings[kind].workers:
+        problem = "building_full"
+    else:
+        return building
+    reject(sink, intent, problem)
+    return None
+
+
+def _workers(state: WorldState, building_id: str) -> int:
+    return sum(
+        1
+        for villager in state.villagers.values()
+        if villager.activity is not None
+        and villager.activity.kind in WORKPLACE_KINDS
+        and villager.activity.target == building_id
+    )
+
+
+def start_recipe(ctx: Context, state: WorldState, intent: Intent, sink: EventSink) -> None:
+    assert isinstance(intent, Craft)
+    registry = ctx.registry
+    villager = state.villagers[intent.actor]
+    recipe = registry.recipes.get(intent.recipe)
+    if recipe is None:
+        return reject(sink, intent, "unknown_recipe")
+    if not ctx.available(state, villager, recipe.id):
+        return reject(sink, intent, "locked")
+    building = workplace(ctx, state, villager, intent, intent.building, recipe.building, sink)
+    if building is None:
+        return None
+    if not villager.inventory.has(recipe.inputs):
+        return reject(sink, intent, "missing_inputs")
+    freed = bundle_weight(registry, recipe.inputs)
+    if not fits(registry, villager.inventory, recipe.outputs, ctx.config.carry_limit, freed):
+        return reject(sink, intent, "carry_limit")
+    tools = used_tools(ctx, villager, "recipe", recipe.id, (), ()) or []
+    speed = work_speed(
+        ctx,
+        state,
+        villager,
+        kind="recipe",
+        ident=recipe.id,
+        tags=(),
+        skill=recipe.skill,
+        tools=tools,
+        building=building.id,
+    )
+    return start_work(
+        ctx,
+        villager,
+        intent,
+        sink,
+        kind="recipe",
+        ident=recipe.id,
+        target=building.id,
+        work=recipe.work_ticks,
+        speed=speed,
+        inputs=recipe.inputs,
+    )
+
+
+def start_research(ctx: Context, state: WorldState, intent: Intent, sink: EventSink) -> None:
+    assert isinstance(intent, Research)
+    registry = ctx.registry
+    villager = state.villagers[intent.actor]
+    tech = registry.technologies.get(intent.technology)
+    if tech is None:
+        return reject(sink, intent, "unknown_technology")
+    known = state.village_knowledge if tech.scope == "village" else villager.knowledge
+    if tech.id in known:
+        return reject(sink, intent, "already_known")
+    building = workplace(ctx, state, villager, intent, intent.building, tech.building, sink)
+    if building is None:
+        return None
+    if not villager.inventory.has(tech.cost):
+        return reject(sink, intent, "missing_inputs")
+    tags = registry.buildings[building.kind].tags
+    tools = used_tools(ctx, villager, "building", building.kind, tags, ()) or []
+    speed = work_speed(
+        ctx,
+        state,
+        villager,
+        kind="building",
+        ident=building.kind,
+        tags=tags,
+        skill=None,
+        tools=tools,
+        attribute="research_speed",
+        building=building.id,
+    )
+    return start_work(
+        ctx,
+        villager,
+        intent,
+        sink,
+        kind="research",
+        ident=tech.id,
+        target=building.id,
+        work=tech.research_ticks,
+        speed=speed,
+        inputs=tech.cost,
+    )
+
+
 def finish(
     ctx: Context,
     villager: Villager,
@@ -300,7 +424,61 @@ def _finish_action(
     )
 
 
-_FINISHERS: dict[str, Finisher] = {"action": _finish_action}
+def _finish_recipe(
+    ctx: Context, state: WorldState, villager: Villager, activity: Activity, sink: EventSink
+) -> None:
+    registry = ctx.registry
+    recipe = registry.recipes[activity.ident]
+    tools = used_tools(ctx, villager, "recipe", recipe.id, (), ()) or []
+    for item, qty in sorted(recipe.outputs.items()):
+        villager.inventory.add(registry, item, qty)
+    finish(
+        ctx,
+        villager,
+        activity,
+        sink,
+        created=recipe.outputs,
+        skill=recipe.skill,
+        tools=tools,
+    )
+
+
+def _finish_research(
+    ctx: Context, state: WorldState, villager: Villager, activity: Activity, sink: EventSink
+) -> None:
+    registry = ctx.registry
+    tech = registry.technologies[activity.ident]
+    village = tech.scope == "village"
+    known = state.village_knowledge if village else villager.knowledge
+    if tech.id in known:
+        interrupt(ctx, villager, sink, cause="engine", reason="already_known")
+        return
+    known.update((tech.id, *tech.unlocks_recipes, *tech.unlocks_buildings))
+    scope = Scope() if village else Scope(villager=villager.id)
+    source = f"technology:{tech.id}"
+    state.modifiers = state.modifiers + tuple(
+        Modifier.from_def(m, source, scope) for m in tech.modifiers
+    )
+    assert activity.target is not None
+    kind = state.buildings[activity.target].kind
+    tools = used_tools(ctx, villager, "building", kind, registry.buildings[kind].tags, ()) or []
+    finish(
+        ctx,
+        villager,
+        activity,
+        sink,
+        created={},
+        skill=None,
+        tools=tools,
+    )
+    sink.emit("technology_learned", actor=villager.id, technology=tech.id, scope=tech.scope)
+
+
+_FINISHERS: dict[str, Finisher] = {
+    "action": _finish_action,
+    "recipe": _finish_recipe,
+    "research": _finish_research,
+}
 
 
 def complete(ctx: Context, state: WorldState, villager: Villager, sink: EventSink) -> None:

@@ -13,11 +13,13 @@ from pericles.core.events import Event, EventSink
 from pericles.core.geometry import Coord
 from pericles.core.intents import (
     Construct,
+    Craft,
     Deliver,
     Deposit,
     Intent,
     MoveTo,
     PlaceBuilding,
+    Research,
     StartAction,
     Take,
     Wait,
@@ -45,6 +47,8 @@ class Engine:
             Construct: partial(construction.construct, self.context),
             Deposit: partial(construction.deposit, self.context),
             Take: partial(construction.take, self.context),
+            Craft: partial(work.start_recipe, self.context),
+            Research: partial(work.start_research, self.context),
         }
         self._cache: tuple[TileMap, frozenset[Coord], TerrainCostField] | None = (
             None  # pragma: no mutate - cache sentinel; any non-matching value just forces a rebuild
