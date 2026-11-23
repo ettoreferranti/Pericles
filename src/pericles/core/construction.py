@@ -17,7 +17,7 @@ from pericles.core.geometry import Coord
 from pericles.core.intents import Construct, Deliver, Deposit, Intent, PlaceBuilding, Take
 from pericles.core.inventory import fits, transfer
 from pericles.core.state import Villager, WorldState
-from pericles.core.work import EPSILON, start_work, used_tools, work_speed
+from pericles.core.work import EPSILON, finish, start_work, used_tools, work_speed
 
 
 def blocked_tiles(ctx: Context, state: WorldState) -> frozenset[Coord]:
@@ -175,14 +175,15 @@ def progress(ctx: Context, state: WorldState, villager: Villager, sink: EventSin
     building.work_done = min(work, building.work_done + activity.speed)
     activity.done = building.work_done
     if building.work_done >= work - EPSILON:
-        _complete(state, building, sink)
+        _complete(ctx, state, building, sink)
 
 
-def _complete(state: WorldState, building: Building, sink: EventSink) -> None:
+def _complete(ctx: Context, state: WorldState, building: Building, sink: EventSink) -> None:
     building.complete = True
     destroyed = dict(sorted(building.delivered.items()))
     building.delivered = {}
     sink.emit("building_completed", building=building.id, kind=building.kind, destroyed=destroyed)
+    tags = ctx.registry.buildings[building.kind].tags
     for vid in sorted(state.villagers):
         villager = state.villagers[vid]
         activity = villager.activity
@@ -191,16 +192,8 @@ def _complete(state: WorldState, building: Building, sink: EventSink) -> None:
             and activity.kind == "construction"
             and activity.target == building.id
         ):
-            villager.activity = None
-            sink.emit(
-                "work_done",
-                actor=vid,
-                work="construction",
-                ident=building.kind,
-                target=building.id,
-                created={},
-                destroyed={},
-            )
+            tools = used_tools(ctx, villager, "building", building.kind, tags, ()) or []
+            finish(ctx, villager, activity, sink, created={}, skill=None, tools=tools)
 
 
 def _store(

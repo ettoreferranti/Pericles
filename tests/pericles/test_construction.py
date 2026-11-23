@@ -565,3 +565,49 @@ def test_the_cost_field_follows_new_walls(econ: Registry) -> None:
     assert second is not first
     assert second.cost(Coord(1, 0)) is None
     assert engine._cost_field(state) is second
+
+
+def finishing_hut(
+    econ: Registry, make_world: MakeWorld, durability: int
+) -> tuple[WorldState, list[Event]]:
+    state = world(make_world)
+    hut = with_hut(state)
+    hut.delivered = {"wood": 4}
+    hut.work_done = 19.0
+    state.villagers["a"].inventory.add_tools([Tool("hammer", durability)])
+    return state, run(Engine(econ), state, [Construct("a", "b0")], 1)
+
+
+@pytest.mark.req("REQ-SIM-010")
+def test_completing_a_building_wears_the_builders_tools(
+    econ: Registry, make_world: MakeWorld
+) -> None:
+    """AC2: a tool used to build loses one durability when the building completes."""
+    state, events = finishing_hut(econ, make_world, 2)
+    assert state.villagers["a"].inventory.tools == [Tool("hammer", 1)]
+    assert of(events, "tool_broken") == []
+
+
+@pytest.mark.req("REQ-SIM-010")
+def test_a_tool_at_one_durability_breaks_on_completion(
+    econ: Registry, make_world: MakeWorld
+) -> None:
+    """AC2: a tool at 0 durability is destroyed and reported."""
+    state, events = finishing_hut(econ, make_world, 1)
+    assert state.villagers["a"].inventory.tools == []
+    assert of(events, "tool_broken") == [
+        {"actor": "a", "item": "hammer", "destroyed": {"hammer": 1}}
+    ]
+    assert [e.kind for e in events][-3:] == ["building_completed", "work_done", "tool_broken"]
+
+
+@pytest.mark.req("REQ-SIM-010")
+def test_an_interrupted_builder_wears_nothing(econ: Registry, make_world: MakeWorld) -> None:
+    """AC2: tools wear only when the work completes, not when it is interrupted."""
+    state = world(make_world)
+    with_hut(state).delivered = {"wood": 4}
+    state.villagers["a"].inventory.add_tools([Tool("hammer", 2)])
+    engine = Engine(econ)
+    run(engine, state, [Construct("a", "b0")], 2)
+    engine.step(state, [MoveTo("a", Coord(1, 1))])
+    assert state.villagers["a"].inventory.tools == [Tool("hammer", 2)]
