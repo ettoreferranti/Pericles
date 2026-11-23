@@ -32,7 +32,7 @@ M1b gives villagers work: inventories, resource nodes, actions, tools, skills, b
    - The footprint of a building without an entrance is not walkable, and such a site cannot be placed on a villager.
    - Construction completes when every cost item has been delivered and every unit of build work is done. The delivered materials are then destroyed into the structure.
    - The pathfinding cost field is cached on the tilemap's identity plus the set of blocked tiles, so the tilemap must be replaced rather than changed in place.
-   - Recipes and research at a building allow at most its `workers` simultaneous workers. Construction has no limit; build speed is `work_speed` resolved against the target `building`.
+   - Recipes and research at a building allow at most its `workers` simultaneous workers. Actions located at a building count against the same limit when its `workers` is above 0 (0 means no limit for actions; recipes and research at such a building are never possible). Construction has no limit; build speed is `work_speed` resolved against the target `building`.
    - Construction can start only once every cost item has been delivered.
 8. **Ownership** is `personal(owner)`, `shared(owners)` or `communal`. Every take from a store emits `item_taken`. A take by a villager who is not an owner of a personal or shared store also emits `take_unowned`. A communal store is owned by every villager, so it never produces `take_unowned`; laws (M3) decide whether such takes are theft.
 9. **Knowledge** is a set of content IDs held by each villager and by the village.

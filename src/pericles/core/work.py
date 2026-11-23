@@ -23,7 +23,7 @@ from pericles.core.inventory import (
 from pericles.core.modifiers import Modifier, Op, Scope, Target, resolve
 from pericles.core.state import Activity, Villager, WorldState
 
-WORKPLACE_KINDS = ("recipe", "research")
+WORKPLACE_KINDS = ("action", "recipe", "research")
 
 Finisher = Callable[[Context, WorldState, Villager, Activity, EventSink], None]
 
@@ -193,6 +193,9 @@ def start_action(ctx: Context, state: WorldState, intent: Intent, sink: EventSin
             return reject(sink, intent, "incomplete")
         if not near(villager.pos, building_tiles(building, registry)):
             return reject(sink, intent, "not_at_location")
+        capacity = registry.buildings[building.kind].workers
+        if capacity > 0 and _workers(state, building.id) >= capacity:
+            return reject(sink, intent, "building_full")
         target = building_id = building.id
     if location.terrains and state.tilemap.terrain_at(villager.pos) not in location.terrains:
         return reject(sink, intent, "not_at_location")
@@ -203,6 +206,10 @@ def start_action(ctx: Context, state: WorldState, intent: Intent, sink: EventSin
     ]
     if room and not any(room):
         return reject(sink, intent, "carry_limit")
+    if location.node is not None and node is not None:
+        yielded = registry.nodes[node.kind].yields
+        if not capacity_for(registry, villager.inventory, yielded, limit, freed):
+            return reject(sink, intent, "carry_limit")
     speed = work_speed(
         ctx,
         state,
@@ -402,6 +409,11 @@ def _finish_action(
     tools = used_tools(ctx, villager, "action", action.id, action.tags, action.requires.tools)
     assert tools is not None  # a working villager's inventory cannot have lost a required tool
     yields = None if node is None else registry.nodes[node.kind].yields
+    if yields is not None and not capacity_for(
+        registry, villager.inventory, yields, ctx.config.carry_limit
+    ):
+        interrupt(ctx, villager, sink, cause="engine", reason="carry_limit")
+        return
     created: dict[str, int] = {}
     for item in sorted(action.outputs, key=lambda name: (name != yields, name)):
         qty = action.outputs[item]

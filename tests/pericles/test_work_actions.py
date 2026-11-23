@@ -107,6 +107,7 @@ REJECTIONS = [
     ("chop", "n0", deplete, "depleted"),
     ("sow", None, onto_forest, "not_at_location"),
     ("chop", "n0", give(("wood", 15)), "carry_limit"),
+    ("log", "n0", give(("wood", 14), ("plank", 1)), "carry_limit"),
     ("pick", "n1", stall_picking, "cannot_work"),
     ("tinker", None, nothing, "bad_target"),
     ("tinker", "n0", nothing, "bad_target"),
@@ -601,3 +602,118 @@ def test_a_tool_the_action_produces_is_not_worn_by_it(
     assert of(events, "work_done")[0]["created"] == {"spike": 1}
     assert of(events, "tool_broken") == []
     assert state.villagers["a"].inventory.tools == [Tool("spike", 1)]
+
+
+@pytest.mark.req("REQ-SIM-013")
+def test_a_harvest_that_no_longer_fits_its_yield_is_interrupted(
+    econ: Registry, make_world: MakeWorld
+) -> None:
+    """AC2: if no unit of the node's yield fits at completion, the harvest is interrupted."""
+    state = world(make_world)
+    engine = Engine(econ)
+    engine.step(state, [StartAction("a", "log", "n0")])
+    state.villagers["a"].inventory.add(econ, "wood", 14)
+    state.villagers["a"].inventory.add(econ, "plank", 1)  # 1.0 left: a plank fits, wood does not
+    events = run(engine, state, [], 3)
+    assert of(events, "work_done") == []
+    assert [(d["cause"], d["reason"]) for d in of(events, "work_interrupted")] == [
+        ("engine", "carry_limit")
+    ]
+    assert state.nodes["n0"].stock == 6
+    assert state.villagers["a"].inventory.count("plank") == 1
+    assert state.villagers["a"].activity is None
+
+
+@pytest.mark.req("REQ-SIM-009")
+def test_an_action_at_a_building_counts_against_its_workers(
+    econ: Registry, make_world: MakeWorld
+) -> None:
+    """AC3: the workshop has one workplace; a second villager starting an action there is full."""
+    state = world(make_world)
+    state.villagers["b"] = Villager("b", "Bo", Coord(0, 1))
+    engine = Engine(econ)
+    first = engine.step(state, [StartAction("b", "tinker", "b0")])[1]
+    assert [event.kind for event in first] == ["work_started"]
+    events = engine.step(state, [StartAction("a", "tinker", "b0")])[1]
+    assert of(events, "intent_rejected") == [
+        {"actor": "a", "intent": "start_action", "reason": "building_full"}
+    ]
+    run(engine, state, [], 3)
+    assert [e.kind for e in engine.step(state, [StartAction("a", "tinker", "b0")])[1]] == [
+        "work_started"
+    ]
+
+
+NO_CAP_PACK = """
+terrains:
+  - {id: grass, walkable: true, color: "#8fb35a"}
+items:
+  - {id: wood, weight: 2.0}
+  - {id: plank, weight: 1.0}
+  - {id: seed, weight: 0.1}
+nodes:
+  - {id: tree, yields: wood, terrains: [grass], density: 1.0, stock: 6}
+actions:
+  - {id: regrind, duration_ticks: 2, inputs: {plank: 2}, outputs: {wood: 1}, location: {node: tree}}
+  - {id: sift, duration_ticks: 2, inputs: {seed: 1}, outputs: {wood: 1}, location: {node: tree}}
+  - {id: idle, duration_ticks: 2, location: {building: shed}}
+buildings:
+  - {id: shed, cost: {wood: 1}, build_work: 5}
+"""
+
+
+def small_world(
+    make_world: MakeWorld, tmp_path: Path, nvillagers: int = 1
+) -> tuple[Registry, WorldState]:
+    root = tmp_path / "pack"
+    root.mkdir()
+    (root / "content.yaml").write_text(NO_CAP_PACK, encoding="utf-8")
+    people = [Villager(name, name.upper(), Coord(i, 1)) for i, name in enumerate("ab"[:nvillagers])]
+    state = make_world(("....", "...."), people, [Node("n0", "tree", Coord(0, 0), 6)])
+    state.buildings["b0"] = Building(
+        "b0", "shed", Coord(2, 0), Ownership("communal"), complete=True
+    )
+    return load_registry([root]), state
+
+
+@pytest.mark.req("REQ-SIM-009")
+def test_a_building_without_workers_does_not_cap_its_actions(
+    make_world: MakeWorld, tmp_path: Path
+) -> None:
+    """AC3: workers 0 means no limit for actions hosted at the building."""
+    registry, state = small_world(make_world, tmp_path, 2)
+    state.villagers["a"].pos = Coord(1, 0)
+    state.villagers["b"].pos = Coord(2, 1)
+    events = Engine(registry).step(
+        state, [StartAction("a", "idle", "b0"), StartAction("b", "idle", "b0")]
+    )[1]
+    assert [e.kind for e in events] == ["work_started", "work_started"]
+
+
+@pytest.mark.req("REQ-SIM-013")
+def test_harvest_room_counts_the_inputs_it_frees(make_world: MakeWorld, tmp_path: Path) -> None:
+    """AC2: a harvest whose consumed inputs free the room for its yield may start."""
+    registry, state = small_world(make_world, tmp_path)
+    state.villagers["a"].pos = Coord(0, 1)
+    state.villagers["a"].inventory.add(registry, "wood", 14)
+    state.villagers["a"].inventory.add(registry, "plank", 2)  # full: 30.0
+    events = Engine(registry).step(state, [StartAction("a", "regrind", "n0")])[1]
+    assert [e.kind for e in events] == ["work_started"]
+
+
+@pytest.mark.req("REQ-SIM-013")
+def test_an_interrupted_harvest_returns_its_inputs(make_world: MakeWorld, tmp_path: Path) -> None:
+    """AC2: when the yield no longer fits at completion, the reserved inputs come back."""
+    registry, state = small_world(make_world, tmp_path)
+    villager = state.villagers["a"]
+    villager.pos = Coord(0, 1)
+    villager.inventory.add(registry, "wood", 14)
+    villager.inventory.add(registry, "seed", 1)
+    engine = Engine(registry)
+    engine.step(state, [StartAction("a", "sift", "n0")])
+    villager.inventory.add(registry, "plank", 1)
+    events = run(engine, state, [], 3)
+    assert [(d["cause"], d["reason"]) for d in of(events, "work_interrupted")] == [
+        ("engine", "carry_limit")
+    ]
+    assert villager.inventory.count("seed") == 1

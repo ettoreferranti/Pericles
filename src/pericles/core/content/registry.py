@@ -149,6 +149,13 @@ def check_references(registry: Registry) -> list[str]:
         refs("actions", ident, "inputs", "items", action.inputs)
         refs("actions", ident, "outputs", "items", action.outputs)
         tags("actions", ident, "requires.tools", "items", action.requires.tools)
+        for consumed in action.inputs:
+            for tag in action.requires.tools:
+                if consumed in registry.items and tag in registry.items[consumed].tags:
+                    problems.append(
+                        f"{where('actions', ident, 'inputs')}: {consumed!r} is consumed but also "
+                        f"satisfies the required tool tag {tag!r}"
+                    )
         if action.location.node is not None:
             refs("actions", ident, "location.node", "nodes", [action.location.node])
         host = registry.nodes.get(action.location.node) if action.location.node else None

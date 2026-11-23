@@ -88,3 +88,22 @@ def test_the_default_winter_blocks_farming(registry: Registry) -> None:
 def test_default_config_accepts_overrides() -> None:
     config = default_config(carry_limit=12.0)
     assert (config.calendar, config.carry_limit) == (DEFAULT_CALENDAR, 12.0)
+
+
+@pytest.mark.req("REQ-SIM-009")
+def test_a_farm_hosts_four_farmers(registry: Registry) -> None:
+    """AC3: the farm declares four workers; a fifth farmer is turned away."""
+    names = ["a", "b", "c", "d", "e"]
+    spots = [Coord(1, 2), Coord(1, 3), Coord(1, 4), Coord(2, 1), Coord(3, 1)]
+    state = grass_world(
+        [Villager(n, n.upper(), spot) for n, spot in zip(names, spots, strict=True)]
+    )
+    state.buildings["b0"] = Building(
+        "b0", "farm", Coord(2, 2), Ownership("communal"), complete=True
+    )
+    engine = Engine(registry, default_config())
+    kinds = [
+        engine.step(state, [StartAction(n, "farm_grain", "b0")])[1][0].data.get("reason")
+        for n in names
+    ]
+    assert kinds == [None, None, None, None, "building_full"]
