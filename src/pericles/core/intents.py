@@ -34,3 +34,42 @@ class StartAction(Intent):
     action: str
     target: str | None = None
     kind: ClassVar[str] = "start_action"
+
+
+@dataclass(frozen=True)
+class PlaceBuilding(Intent):
+    building: str
+    origin: Coord
+    ownership: str = "personal"
+    co_owners: tuple[str, ...] = ()
+    kind: ClassVar[str] = "place_building"
+
+
+@dataclass(frozen=True)
+class Deliver(Intent):
+    building: str
+    item: str
+    qty: int
+    kind: ClassVar[str] = "deliver"
+
+
+@dataclass(frozen=True)
+class Construct(Intent):
+    building: str
+    kind: ClassVar[str] = "construct"
+
+
+@dataclass(frozen=True)
+class Deposit(Intent):
+    building: str
+    item: str
+    qty: int
+    kind: ClassVar[str] = "deposit"
+
+
+@dataclass(frozen=True)
+class Take(Intent):
+    building: str
+    item: str
+    qty: int
+    kind: ClassVar[str] = "take"

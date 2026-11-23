@@ -5,12 +5,23 @@ from __future__ import annotations
 from collections.abc import Callable, Sequence
 from functools import partial
 
-from pericles.core import work
+from pericles.core import construction, work
 from pericles.core.config import EngineConfig
 from pericles.core.content.registry import Registry
 from pericles.core.context import Context
 from pericles.core.events import Event, EventSink
-from pericles.core.intents import Intent, MoveTo, StartAction, Wait
+from pericles.core.geometry import Coord
+from pericles.core.intents import (
+    Construct,
+    Deliver,
+    Deposit,
+    Intent,
+    MoveTo,
+    PlaceBuilding,
+    StartAction,
+    Take,
+    Wait,
+)
 from pericles.core.mapgen import TileMap
 from pericles.core.modifiers import expire
 from pericles.core.nodes import regrow
@@ -29,8 +40,13 @@ class Engine:
             MoveTo: self._move_to,
             Wait: self._wait,
             StartAction: partial(work.start_action, self.context),
+            PlaceBuilding: partial(construction.place_building, self.context),
+            Deliver: partial(construction.deliver, self.context),
+            Construct: partial(construction.construct, self.context),
+            Deposit: partial(construction.deposit, self.context),
+            Take: partial(construction.take, self.context),
         }
-        self._field_map: TileMap | None = (
+        self._field_key: tuple[TileMap, frozenset[Coord]] | None = (
             None  # pragma: no mutate - cache sentinel; any non-matching value just forces a rebuild
         )
         self._field: TerrainCostField | None = (
@@ -79,14 +95,20 @@ class Engine:
             activity = villager.activity
             if activity is None:
                 continue
+            if activity.kind == "construction":
+                construction.progress(self.context, state, villager, sink)
+                continue
             activity.done += activity.speed
             if activity.done >= activity.work - work.EPSILON:
                 work.complete(self.context, state, villager, sink)
 
     def _cost_field(self, state: WorldState) -> TerrainCostField:
-        if self._field is None or self._field_map is not state.tilemap:
-            self._field = TerrainCostField(state.tilemap, self.registry)
-            self._field_map = state.tilemap
+        """Cached per tilemap object and blocked-tile set (ADR-0014 §7)."""
+        blocked = construction.blocked_tiles(self.context, state)
+        key = self._field_key
+        if self._field is None or key is None or key[0] is not state.tilemap or key[1] != blocked:
+            self._field = TerrainCostField(state.tilemap, self.registry, blocked.__contains__)
+            self._field_key = (state.tilemap, blocked)
         return self._field
 
     def _move_to(self, state: WorldState, intent: Intent, sink: EventSink) -> None:

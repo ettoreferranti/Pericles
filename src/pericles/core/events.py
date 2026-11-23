@@ -29,7 +29,7 @@ class EventSink:
         self.tick = tick
         self.events: list[Event] = []
 
-    def emit(self, kind: str, **data: Any) -> Event:
+    def emit(self, kind: str, /, **data: Any) -> Event:
         event = Event(self.tick, len(self.events), kind, data)
         self.events.append(event)
         return event
