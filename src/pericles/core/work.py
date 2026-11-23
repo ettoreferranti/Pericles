@@ -160,6 +160,8 @@ def start_action(ctx: Context, state: WorldState, intent: Intent, sink: EventSin
     action = registry.actions.get(intent.action)
     if action is None:
         return reject(sink, intent, "unknown_action")
+    if not villager.adult and not set(action.tags) & set(ctx.config.child_action_tags):
+        return reject(sink, intent, "too_young")
     blocked = ctx.config.calendar.season_at(state.tick).blocked_tags
     if any(tag in blocked for tag in action.tags):
         return reject(sink, intent, "season")

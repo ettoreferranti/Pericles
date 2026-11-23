@@ -1,12 +1,14 @@
-"""Ages, death and inheritance (REQ-SIM-017; ADR-0015 §5, §10). Couples, births and coming of
-age are added in later tasks."""
+"""Ages, death, inheritance, homes, couples, conception and births, and children's witnessing and
+coming of age (REQ-SIM-016, REQ-SIM-017; ADR-0015 §5, §9, §10)."""
 
 from __future__ import annotations
+
+from collections.abc import Iterable
 
 from pericles.core import work
 from pericles.core.buildings import Building, Ownership, housing_capacity, storage_capacity
 from pericles.core.context import Context, reject
-from pericles.core.events import EventSink
+from pericles.core.events import Event, EventSink
 from pericles.core.intents import AcceptCouple, Intent, ProposeCouple, SetHome
 from pericles.core.inventory import EPSILON, Inventory, transfer
 from pericles.core.state import Deceased, Pregnancy, Proposal, Villager, WorldState
@@ -328,3 +330,70 @@ def births(ctx: Context, state: WorldState, sink: EventSink) -> None:
         mother.pregnancy = None
         mother.last_birth_tick = state.tick
         sink.emit("born", child=child_id, mother=vid, father=pregnancy.father, sex=sex)
+
+
+NAMED_FIELDS = ("actor", "child", "father", "mother", "target", "villager")
+
+
+def _named(event: Event) -> set[str]:
+    names = {str(event.data[k]) for k in NAMED_FIELDS if event.data.get(k) is not None}
+    names.update(str(v) for v in event.data.get("villagers", ()))
+    return names
+
+
+def _family(state: WorldState, child: Villager) -> set[str]:
+    """The child, its parents and its siblings, living or dead."""
+    parents = set(child.parents)
+    people = [(v.id, v.parents) for v in state.villagers.values()]
+    people += [(d.id, d.parents) for d in state.dead.values()]
+    siblings = {vid for vid, theirs in people if parents & set(theirs)}
+    return {child.id} | parents | siblings
+
+
+def witness(ctx: Context, state: WorldState, events: Iterable[Event]) -> None:
+    """Children record the tick's notable events (REQ-SIM-016 AC3; ADR-0015 §9)."""
+    config = ctx.config
+    events = list(events)
+    limit = config.childhood_memory_limit
+    for vid in sorted(state.villagers):
+        child = state.villagers[vid]
+        if child.adult:
+            continue
+        family = _family(state, child)
+        for event in events:
+            notable = event.kind in config.village_events or (
+                event.kind in config.family_events and bool(_named(event) & family)
+            )
+            if notable:
+                child.witnessed.append(
+                    {"tick": event.tick, "kind": event.kind, "data": dict(event.data)}
+                )
+        del child.witnessed[: max(0, len(child.witnessed) - limit)]
+
+
+def _model(ctx: Context, state: WorldState, child: Villager) -> str | None:
+    config = ctx.config
+    if config.model_rule == "fixed":
+        return config.adult_model
+    models = set()
+    for parent in child.parents:
+        alive = state.villagers.get(parent)
+        model = alive.model if alive is not None else None
+        if alive is None and parent in state.dead:
+            model = state.dead[parent].model
+        if model is not None:
+            models.add(model)
+    return state.rng.choice(sorted(models)) if models else config.adult_model
+
+
+def come_of_age(ctx: Context, state: WorldState, sink: EventSink) -> None:
+    """Children at adult age become adults, with a model and memories (REQ-SIM-016 AC2-AC3)."""
+    for vid in sorted(state.villagers):
+        child = state.villagers[vid]
+        if child.adult or age_days(ctx, state, child) < ctx.config.adult_age_days:
+            continue
+        child.adult = True
+        child.model = _model(ctx, state, child)
+        child.memories = child.witnessed
+        child.witnessed = []
+        sink.emit("came_of_age", villager=vid, model=child.model)

@@ -92,6 +92,11 @@ class Engine:
                 reason = "duplicate_intent"
             elif type(intent) not in self._handlers:
                 reason = "unknown_intent"
+            elif (
+                not state.villagers[intent.actor].adult
+                and intent.kind not in self.config.child_intents
+            ):
+                reason = "too_young"
             if reason is not None:
                 sink.emit("intent_rejected", actor=intent.actor, intent=intent.kind, reason=reason)
                 continue
@@ -107,7 +112,9 @@ class Engine:
         if (state.tick + 1) % self.config.calendar.ticks_per_day == 0:
             regrow(state.nodes.values(), self.registry)
             lifecycle.old_age_deaths(self.context, state, sink)
+            lifecycle.come_of_age(self.context, state, sink)
             lifecycle.conceive(self.context, state, sink)
+        lifecycle.witness(self.context, state, sink.events)
         state.modifiers = expire(state.modifiers, state.tick + 1)
         state.tick += 1
         if before is not None:
