@@ -24,6 +24,7 @@ from pericles.core.intents import (
     Take,
     Wait,
 )
+from pericles.core.invariants import InvariantError, check_tick, item_totals
 from pericles.core.mapgen import TileMap
 from pericles.core.modifiers import expire
 from pericles.core.nodes import regrow
@@ -65,6 +66,7 @@ class Engine:
 
     def step(self, state: WorldState, intents: Sequence[Intent]) -> tuple[WorldState, list[Event]]:
         sink = EventSink(state.tick)
+        before = item_totals(state) if self.config.debug_invariants else None
         ordered = sorted(intents, key=lambda i: i.sort_key())
         state.rng.shuffle(ordered)
         acted: set[str] = set()
@@ -88,6 +90,10 @@ class Engine:
             regrow(state.nodes.values(), self.registry)
         state.modifiers = expire(state.modifiers, state.tick + 1)
         state.tick += 1
+        if before is not None:
+            problems = check_tick(self.context, before, state, sink.events)
+            if problems:
+                raise InvariantError(f"tick {state.tick - 1}: " + "; ".join(problems))
         return state, sink.events
 
     def _advance_work(self, state: WorldState, sink: EventSink) -> None:
