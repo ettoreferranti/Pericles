@@ -1,8 +1,12 @@
 # ruff: noqa: E501 (the econ pack keeps one content record per line)
+from collections.abc import Callable, Iterable, Sequence
+
 import pytest
 
 from pericles.core.content.registry import Registry, base_pack_path, load_registry
 from pericles.core.mapgen import Band, MapParams, TileMap, Vein, generate_map
+from pericles.core.nodes import Node
+from pericles.core.state import Villager, WorldState
 
 
 @pytest.fixture(scope="session")
@@ -111,3 +115,21 @@ def econ(tmp_path_factory: pytest.TempPathFactory) -> Registry:
     root.mkdir()
     (root / "content.yaml").write_text(ECON_PACK, encoding="utf-8")
     return load_registry([root])
+
+
+TERRAIN = {".": "grass", "~": "water", "T": "forest"}
+
+
+@pytest.fixture
+def make_world() -> Callable[..., WorldState]:
+    def make(
+        rows: Sequence[str],
+        villagers: Iterable[Villager] = (),
+        nodes: Iterable[Node] = (),
+        seed: int = 1,
+    ) -> WorldState:
+        terrain = [TERRAIN[char] for row in rows for char in row]
+        tilemap = TileMap(len(rows[0]), len(rows), terrain, [0.0] * len(terrain))
+        return WorldState.new(seed, tilemap, villagers, nodes=nodes)
+
+    return make
