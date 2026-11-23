@@ -1,19 +1,23 @@
 from collections.abc import Callable, Sequence
+from pathlib import Path
 
 import pytest
+from conftest import ECON_PACK
 
 from pericles.core.buildings import Building, Ownership
 from pericles.core.calendar import Calendar, Season
 from pericles.core.config import EngineConfig
-from pericles.core.content.registry import Registry
+from pericles.core.content.registry import Registry, load_registry
+from pericles.core.context import Context, knows, reject
 from pericles.core.engine import Engine
 from pericles.core.events import Event, EventSink
 from pericles.core.geometry import Coord
 from pericles.core.intents import Intent, MoveTo, StartAction
 from pericles.core.inventory import Tool
-from pericles.core.modifiers import Modifier, Op, Target
+from pericles.core.modifiers import Modifier, Op, Scope, Target
 from pericles.core.nodes import Node
-from pericles.core.state import Villager, WorldState
+from pericles.core.state import Activity, Villager, WorldState
+from pericles.core.work import EPSILON, start_work, used_tools
 
 MakeWorld = Callable[..., WorldState]
 Setup = Callable[[WorldState, Registry], None]
@@ -93,6 +97,7 @@ REJECTIONS = [
     ("dance", None, nothing, "unknown_action"),
     ("secret_art", None, nothing, "missing_knowledge"),
     ("carve", None, skill(4.9), "skill_too_low"),
+    ("carve", None, nothing, "skill_too_low"),
     ("whittle", None, give(("wood", 1)), "missing_tool"),
     ("whittle", None, give(("hammer", 1)), "missing_inputs"),
     ("chop", None, nothing, "bad_target"),
@@ -338,6 +343,7 @@ def test_starting_work_stops_movement(econ: Registry, make_world: MakeWorld) -> 
     assert state.villagers["a"].move_progress == 1.0
     events = engine.step(state, [StartAction("a", "pick", "n1")])[1]
     assert [event.kind for event in events] == ["stopped", "work_started"]
+    assert dict(events[0].data) == {"actor": "a", "at": [0, 0]}
     villager = state.villagers["a"]
     assert (villager.path, villager.move_progress, villager.pos) == ([], 0.0, Coord(0, 0))
 
@@ -404,3 +410,175 @@ def test_nodes_regrow_at_the_end_of_each_day(econ: Registry, make_world: MakeWor
     assert state.nodes["n0"].stock == 2
     engine.step(state, [])
     assert (state.nodes["n0"].stock, state.nodes["n0"].regrow) == (3, 0.5)
+
+
+EXTRA_PACK = """
+items:
+  - id: gloves
+    weight: 0.5
+    durability: 4
+    tags: [tool]
+    modifiers:
+      - {target: {kind: action, tag: labour}, attribute: work_speed, op: add, value: 1.0}
+actions:
+  - id: practise
+    duration_ticks: 4
+    outputs: {plank: 1}
+    requires: {skill: carving, min_skill: 0.5}
+  - {id: fell, duration_ticks: 10, inputs: {seed: 1}, outputs: {wood: 2}, location: {node: tree}}
+"""
+
+
+@pytest.fixture
+def extra(tmp_path: Path) -> Registry:
+    root = tmp_path / "extra"
+    root.mkdir()
+    (root / "content.yaml").write_text(EXTRA_PACK, encoding="utf-8")
+    base = tmp_path / "base"
+    base.mkdir()
+    (base / "content.yaml").write_text(ECON_PACK, encoding="utf-8")
+    return load_registry([base, root])
+
+
+def test_used_tools_include_each_item_once_and_match_by_tag(extra: Registry) -> None:
+    """Tools whose modifier targets the work by id or tag are used, one instance per item."""
+    state_villager = Villager("a", "Ana", Coord(0, 0))
+    state_villager.inventory.add_tools([Tool("axe", 3), Tool("axe", 2), Tool("gloves", 4)])
+    ctx = Engine(extra).context
+    chop = used_tools(ctx, state_villager, "action", "chop", ("labour",), [])
+    assert chop == [Tool("axe", 2), Tool("gloves", 4)]
+    assert used_tools(ctx, state_villager, "action", "whittle", ("craft",), []) == []
+
+
+@pytest.mark.req("REQ-SIM-014")
+def test_any_skill_level_above_the_minimum_starts_the_action(
+    extra: Registry, make_world: MakeWorld
+) -> None:
+    """AC1: an untrained villager (level 0) is below a fractional minimum skill."""
+    state = world(make_world)
+    events = Engine(extra).step(state, [StartAction("a", "practise")])[1]
+    assert of(events, "intent_rejected")[0]["reason"] == "skill_too_low"
+
+
+def test_the_inputs_freed_make_room_for_the_outputs(econ: Registry, make_world: MakeWorld) -> None:
+    """A full inventory may start work whose inputs weigh at least as much as its outputs."""
+    state = world(make_world)
+    give(("hammer", 1), ("wood", 15))(state, econ)
+    events = Engine(econ).step(state, [StartAction("a", "whittle")])[1]
+    assert [event.kind for event in events] == ["work_started"]
+
+
+def test_secondary_outputs_do_not_draw_on_the_node(extra: Registry, make_world: MakeWorld) -> None:
+    """Only the yield item is limited by, and taken from, the node's stock."""
+    state = world(make_world)
+    state.nodes["n0"].stock = 1
+    events = run(Engine(extra), state, [StartAction("a", "log", "n0")], 2)
+    assert of(events, "work_done")[0]["created"] == {"plank": 10, "wood": 1}
+    assert state.nodes["n0"].stock == 0
+
+
+def test_a_depleted_node_interrupt_returns_the_inputs(
+    extra: Registry, make_world: MakeWorld
+) -> None:
+    """An action that finds its node empty is interrupted and gets its reserved inputs back."""
+    villagers = [Villager("a", "Ana", Coord(1, 0)), Villager("b", "Bo", Coord(3, 0))]
+    state = make_world(ROWS, villagers, [Node("n0", "tree", Coord(2, 0), 1)])
+    for villager in villagers:
+        villager.inventory.add(extra, "seed", 1)
+    run(Engine(extra), state, [StartAction("a", "fell", "n0"), StartAction("b", "fell", "n0")], 10)
+    assert state.villagers["b"].inventory.items == {"seed": 1}
+    assert state.villagers["a"].inventory.items == {"wood": 1}
+
+
+def scoped(scope: Scope, target: Target | None = None) -> Setup:
+    def setup(state: WorldState, registry: Registry) -> None:
+        state.modifiers = (
+            Modifier(target or Target("action", "tinker"), "work_speed", Op.ADD, 1.0, "t", scope),
+        )
+
+    return setup
+
+
+@pytest.mark.parametrize(
+    ("scope", "ticks"),
+    [
+        (Scope(building="b0"), 1),
+        (Scope(building="b9"), 2),
+        (Scope(villager="a"), 1),
+        (Scope(villager="b"), 2),
+        (Scope(until_tick=5), 1),
+        (Scope(until_tick=0), 2),
+    ],
+)
+def test_modifier_scopes_see_the_villager_building_and_tick(
+    econ: Registry, make_world: MakeWorld, scope: Scope, ticks: int
+) -> None:
+    """Work speed resolves modifiers for this villager, this building and the current tick."""
+    state = world(make_world)
+    scoped(scope)(state, econ)
+    events = Engine(econ).step(state, [StartAction("a", "tinker", "b0")])[1]
+    assert of(events, "work_started")[0]["ticks"] == ticks
+
+
+def test_start_work_counts_only_the_remaining_work(econ: Registry, make_world: MakeWorld) -> None:
+    """Resuming with progress already done needs only the remainder (work - done) / speed."""
+    state = world(make_world)
+    sink = EventSink(0)
+    intent = StartAction("a", "chop", "n0")
+    start_work(
+        Engine(econ).context,
+        state.villagers["a"],
+        intent,
+        sink,
+        kind="action",
+        ident="chop",
+        target="n0",
+        work=10,
+        speed=1.0,
+        inputs={},
+        done=3.0,
+    )
+    assert of(sink.events, "work_started")[0]["ticks"] == 7
+
+
+def test_idle_villagers_do_not_block_working_ones(econ: Registry, make_world: MakeWorld) -> None:
+    """Work progresses for every villager that has an activity, whoever precedes them."""
+    villagers = [Villager("a", "Ana", Coord(0, 0)), Villager("b", "Bo", Coord(1, 0))]
+    state = make_world(ROWS, villagers, [Node("n0", "tree", Coord(2, 0), 6)])
+    engine = Engine(econ)
+    engine.step(state, [StartAction("b", "chop", "n0")])
+    activity = state.villagers["b"].activity
+    assert activity is not None and activity.done == 1.0
+
+
+def test_work_completes_within_epsilon_of_the_target(econ: Registry, make_world: MakeWorld) -> None:
+    """A tick that brings the progress to within EPSILON of the work completes it."""
+    state = world(make_world)
+    state.villagers["a"].activity = Activity("action", "pick", "n1", 1.0, 0.0, 1.0 - EPSILON)
+    events = Engine(econ).step(state, [])[1]
+    assert [event.kind for event in events] == ["work_done"]
+
+
+def test_context_locks_what_a_technology_unlocks(econ: Registry, make_world: MakeWorld) -> None:
+    """Recipes and buildings that a technology unlocks need knowledge, personal or village-wide."""
+    ctx = Context.build(econ, EngineConfig())
+    assert ctx.locked == {"make_axe", "vault"}
+    state = world(make_world)
+    villager = state.villagers["a"]
+    assert ctx.available(state, villager, "saw")
+    assert not ctx.available(state, villager, "make_axe")
+    villager.knowledge.add("make_axe")
+    assert ctx.available(state, villager, "make_axe")
+    assert not ctx.available(state, villager, "vault")
+    state.village_knowledge.add("vault")
+    assert ctx.available(state, villager, "vault")
+    assert knows(state, villager, "vault") and not knows(state, villager, "saw")
+
+
+def test_reject_names_the_intent_kind(make_world: MakeWorld) -> None:
+    """Rejections report the actor, the intent kind and the reason."""
+    sink = EventSink(0)
+    reject(sink, StartAction("a", "x"), "why")
+    assert of(sink.events, "intent_rejected") == [
+        {"actor": "a", "intent": "start_action", "reason": "why"}
+    ]
