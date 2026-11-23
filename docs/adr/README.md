@@ -17,5 +17,6 @@ Format: Michael Nygard. New ADRs get the next number. Superseded ADRs stay, with
 | [0011](0011-detection-reputation-sanctions.md) | Enforcement by detection, reputation and villager-imposed sanctions | Amended by 0012 |
 | [0012](0012-emergent-institutions.md) | Emergent institutions from generic building blocks | Accepted |
 | [0013](0013-engine-kernel-conventions.md) | Engine kernel conventions | Accepted |
+| [0014](0014-gameplay-state-model.md) | Gameplay state model | Accepted |
 
 Template: copy any ADR and keep the sections Context / Decision / Consequences.
