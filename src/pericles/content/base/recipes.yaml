@@ -1,0 +1,7 @@
+recipes:
+  - {id: saw_planks, building: lumber_camp, inputs: {wood: 1}, outputs: {plank: 2}, work_ticks: 30, skill: carpentry}
+  - {id: make_fishing_rod, building: fishing_hut, inputs: {wood: 1, hide: 1}, outputs: {fishing_rod: 1}, work_ticks: 30, skill: fishing}
+  - {id: smelt_iron, building: smithy, inputs: {iron_ore: 2, wood: 1}, outputs: {iron: 1}, work_ticks: 60, skill: smithing}
+  - {id: forge_axe, building: smithy, inputs: {iron: 1, wood: 1}, outputs: {axe: 1}, work_ticks: 90, skill: smithing}
+  - {id: forge_pickaxe, building: smithy, inputs: {iron: 2, wood: 1}, outputs: {pickaxe: 1}, work_ticks: 120, skill: smithing}
+  - {id: mint_coins, building: mint, inputs: {gold_ore: 1}, outputs: {coin: 20}, work_ticks: 60, skill: minting}

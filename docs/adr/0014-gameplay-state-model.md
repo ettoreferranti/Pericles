@@ -18,7 +18,9 @@ M1b gives villagers work: inventories, resource nodes, actions, tools, skills, b
    - the modifiers of each held tool that the work requires or that targets the work, using the first, most worn, instance of each tool item;
    - trait modifiers;
    - an `add` of `skill level × skill_speed_per_level` for the work's skill.
-3. **Interruption.** Any new intent from a working villager first interrupts the current work (cause `actor`). The engine interrupts work it can no longer finish (cause `engine`). `Engine.interrupt` exists for interventions by other villagers (cause `intervened`, REQ-SOC-022).
+   - Tool wear uses the tools held when the work started or was used, computed before any outputs are added, so a tool produced by the work is never worn by that same work (`work.finish` takes the list of tools).
+   - Building work counts as a tool use: on completion each builder's applicable tools lose 1 durability (breaking emits `tool_broken` with `destroyed`). Builders interrupted before completion wear nothing.
+3. **Interruption.** Any new intent from a working villager first interrupts the current work (cause `actor`). The interruption happens before the new intent is validated, so an intent that is then rejected still ends the old work. The engine interrupts work it can no longer finish (cause `engine`). `Engine.interrupt` exists for interventions by other villagers (cause `intervened`, REQ-SOC-022).
 4. **Item ledger.** Items are created or destroyed only by events that carry `created` and/or `destroyed` bundles. Transfers between containers (inventories, reserved inputs, delivered materials, stores) carry neither. The invariant checker compares container totals before and after each tick against these bundles.
 5. **Resource nodes.**
    - A node's stock counts units of its yield item. A node action must output that item (registry rule).

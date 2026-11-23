@@ -1,7 +1,7 @@
 # ECO: Economy
 
 ### REQ-ECO-001: Ownership
-Must · M1 · Accepted
+Must · M1 · Implemented
 - AC1: Every building and store has an ownership of `personal(owner)`, `shared(owners)` or `communal`.
 - AC2: Taking items from a store the villager does not own emits a `take_unowned` event, with item, quantity, store and owner.
 

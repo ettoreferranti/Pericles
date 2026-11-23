@@ -124,7 +124,7 @@ v1 base pack:
 | Source | Action | Output |
 |---|---|---|
 | Berry bush | gather | food |
-| Field (at farm) | sow / tend / harvest | grain (food) |
+| Field (at farm) | `farm_grain` (v1, ADR-0014; sow/tend/harvest deferred) | grain (food) |
 | Game animals | hunt | meat, hides |
 | Water | fish | fish |
 | Forest | fell | wood (trees regrow) |

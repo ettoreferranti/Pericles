@@ -151,6 +151,12 @@ def check_references(registry: Registry) -> list[str]:
         tags("actions", ident, "requires.tools", "items", action.requires.tools)
         if action.location.node is not None:
             refs("actions", ident, "location.node", "nodes", [action.location.node])
+        host = registry.nodes.get(action.location.node) if action.location.node else None
+        if host is not None and host.yields in registry.items and host.yields not in action.outputs:
+            problems.append(
+                f"{where('actions', ident, 'outputs')}: must include {host.yields!r}, "
+                f"the yield of node {action.location.node!r}"
+            )
         if action.location.building is not None:
             refs("actions", ident, "location.building", "buildings", [action.location.building])
         refs("actions", ident, "location.terrains", "terrains", action.location.terrains)

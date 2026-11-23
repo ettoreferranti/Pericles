@@ -1,0 +1,13 @@
+technologies:
+  - id: metallurgy
+    building: school
+    cost: {iron_ore: 2}
+    research_ticks: 600
+    unlocks_recipes: [forge_axe, forge_pickaxe]
+  - id: crop_rotation
+    building: school
+    cost: {grain: 10}
+    research_ticks: 900
+    scope: village
+    modifiers:
+      - {target: {kind: action, id: farm_grain}, attribute: work_speed, op: mul, value: 1.25}

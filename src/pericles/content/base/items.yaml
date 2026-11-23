@@ -8,3 +8,26 @@ items:
   - {id: iron_ore, weight: 3.0, tags: [ore]}
   - {id: gold_ore, weight: 3.0, tags: [ore]}
   - {id: hide, weight: 1.0, tags: [material]}
+  - {id: plank, weight: 1.0, tags: [material]}
+  - {id: iron, weight: 2.0, tags: [material]}
+  - {id: coin, weight: 0.01, tags: [money]}
+  - id: axe
+    weight: 2.0
+    durability: 100
+    tags: [tool, axe]
+    modifiers:
+      - {target: {kind: action, id: fell_tree}, attribute: work_speed, op: mul, value: 1.5}
+  - id: pickaxe
+    weight: 3.0
+    durability: 100
+    tags: [tool, pickaxe]
+    modifiers:
+      - {target: {kind: action, id: quarry_stone}, attribute: work_speed, op: mul, value: 1.5}
+      - {target: {kind: action, id: mine_iron}, attribute: work_speed, op: mul, value: 1.5}
+      - {target: {kind: action, id: mine_gold}, attribute: work_speed, op: mul, value: 1.5}
+  - id: fishing_rod
+    weight: 1.0
+    durability: 80
+    tags: [tool, fishing_rod]
+    modifiers:
+      - {target: {kind: action, id: catch_fish}, attribute: work_speed, op: mul, value: 1.5}

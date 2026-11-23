@@ -8,7 +8,7 @@ experimenter can change during a run.
 - Requirements: [docs/requirements/](docs/requirements/README.md)
 - Architecture decisions: [docs/adr/](docs/adr/README.md)
 
-Status: M1a Engine kernel complete; M1b Gameplay next.
+Status: M1b Work and economy complete; M1c Life and population next.
 
 ## Development
 

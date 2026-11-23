@@ -86,7 +86,7 @@ DANGLING = {
     ),
     "action-output": (
         "outputs: {wood: 2}",
-        "outputs: {gold: 2}",
+        "outputs: {wood: 2, gold: 2}",
         "actions[fell].outputs: unknown items id 'gold'",
     ),
     "action-node": (
@@ -243,3 +243,29 @@ def test_core_has_no_hard_coded_content_ids(registry: Registry) -> None:
             if isinstance(node, ast.Constant) and isinstance(node.value, str) and node.value in ids:
                 offenders.append(f"{path.relative_to(CORE)}:{node.lineno}: {node.value!r}")
     assert offenders == []
+
+
+@pytest.mark.req("REQ-SIM-007")
+def test_node_actions_must_output_the_node_yield(tmp_path: Path) -> None:
+    """AC1: harvesting draws on a node's stock, so its action must output the node's item."""
+    pack = tmp_path / "pack"
+    pack.mkdir()
+    (pack / "content.yaml").write_text(
+        """
+terrains:
+  - {id: grass, walkable: true, color: "#8fb35a"}
+items:
+  - {id: wood}
+  - {id: stone}
+nodes:
+  - {id: tree, yields: wood, terrains: [grass], density: 0.1, stock: 5}
+actions:
+  - {id: chop, duration_ticks: 5, outputs: {stone: 1}, location: {node: tree}}
+""",
+        encoding="utf-8",
+    )
+    with pytest.raises(
+        ContentError,
+        match=r"actions\[chop\]\.outputs: must include 'wood', the yield of node 'tree'",
+    ):
+        load_registry([pack])
