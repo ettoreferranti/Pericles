@@ -5,10 +5,11 @@ from __future__ import annotations
 from collections import Counter
 from collections.abc import Iterable
 
-from pericles.core.buildings import storage_capacity
+from pericles.core.buildings import housing_capacity, storage_capacity
 from pericles.core.context import Context
 from pericles.core.events import Event
 from pericles.core.inventory import EPSILON, Inventory
+from pericles.core.lifecycle import occupants
 from pericles.core.state import WorldState
 
 
@@ -93,6 +94,55 @@ def check_state(ctx: Context, state: WorldState) -> list[str]:
         capacity = storage_capacity(registry, building)
         if stored > capacity:
             problems.append(f"building {bid} stores {stored}, over its capacity {capacity}")
+    return problems + _check_life(ctx, state)
+
+
+def _check_life(ctx: Context, state: WorldState) -> list[str]:
+    registry = ctx.registry
+    max_health = ctx.config.max_health
+    problems: list[str] = []
+    for vid in sorted(state.villagers):
+        villager = state.villagers[vid]
+        for need, level in sorted(villager.needs.items()):
+            if need not in registry.needs:
+                problems.append(f"villager {vid} has unknown need {need}")
+            elif not 0 <= level <= registry.needs[need].critical:
+                critical = registry.needs[need].critical
+                problems.append(f"villager {vid} {need} {level:g} outside 0..{critical:g}")
+        if not 0 <= villager.damage < max_health:
+            problems.append(
+                f"villager {vid} damage {villager.damage:g} outside [0, {max_health:g})"
+            )
+        partner = villager.partner
+        if partner is not None:
+            if partner not in state.villagers:
+                problems.append(f"villager {vid} partner {partner} is not living")
+            elif state.villagers[partner].partner != vid:
+                problems.append(f"villager {vid} partner {partner} is not partnered back")
+        if villager.home is not None:
+            home = state.buildings.get(villager.home)
+            if home is None or housing_capacity(registry, home) == 0:
+                problems.append(f"villager {vid} home {villager.home} is not a completed house")
+        if not villager.adult and villager.partner is not None:
+            problems.append(f"child {vid} has a partner")
+        if not villager.adult and villager.pregnancy is not None:
+            problems.append(f"child {vid} is pregnant")
+        if vid in state.dead:
+            problems.append(f"{vid} is both living and dead")
+    for bid in sorted(state.buildings):
+        building = state.buildings[bid]
+        housing = housing_capacity(registry, building)
+        housed = occupants(state, bid)
+        if housing > 0 and housed > housing:
+            problems.append(f"building {bid} houses {housed}, over its housing {housing}")
+        for owner in building.ownership.owners:
+            if owner in state.dead:
+                problems.append(f"building {bid} is owned by the dead {owner}")
+    for proposer in sorted(state.proposals):
+        target = state.proposals[proposer].target
+        for party in (proposer, target):
+            if party in state.dead:
+                problems.append(f"proposal {proposer}\u2192{target} names the dead {party}")
     return problems
 
 

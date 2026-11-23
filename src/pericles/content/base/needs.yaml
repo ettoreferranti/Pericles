@@ -1,4 +1,4 @@
 needs:
-  - {id: hunger, rate_per_hour: 4.0, critical: 100}
-  - {id: fatigue, rate_per_hour: 6.0, critical: 100}
-  - {id: cold, rate_per_hour: 0.0, critical: 100}
+  - {id: hunger, rate_per_hour: 4.0, critical: 100, damage_per_hour: 5.0, death_cause: starvation, relief: eat}
+  - {id: fatigue, rate_per_hour: 4.0, critical: 100, relief: sleep}
+  - {id: cold, rate_per_hour: 1.0, critical: 100, damage_per_hour: 5.0, death_cause: cold, relief: shelter}

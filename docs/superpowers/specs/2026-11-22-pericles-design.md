@@ -132,10 +132,13 @@ v1 base pack:
 | Ore vein | mine | iron ore, gold ore |
 | Smithy | smelt + forge | tools (speed up work, wear out) |
 | Mint | mint | coins (from gold ore) |
+| Mill | grind flour | flour (3 grain become 2) |
+| Bakery | bake bread | bread (2 flour and 1 wood become 2; nutrition 20 each) |
 
 Buildings v1: house, storehouse, farm, fishing hut, lumber camp, quarry, mine, smithy, mint, town
-hall, palisade, plus a sample **school/engineer's hut** hosting research recipes for 2 sample techs.
+hall, palisade, mill, bakery, plus a sample **school/engineer's hut** hosting research recipes for 2 sample techs.
 This demonstrates the tech mechanism. The tree itself grows via backlog.
+Grain is barely edible raw (nutrition 3); milling and baking turn 3 grain into 2 bread (nutrition 20 each).
 
 ### 4.3 Villagers
 
@@ -147,6 +150,8 @@ Ownership of buildings and stock: `personal | shared(list) | communal`. Taking f
 do not own is a recorded event, which may be classified as theft under active laws.
 
 ### 4.4 Lifecycle
+
+Rules and parameters: ADR-0015.
 
 - Two adults may form a couple (an LLM decision for both, via dialogue).
 - With a house that has free capacity and sufficient food stock, a child is born after

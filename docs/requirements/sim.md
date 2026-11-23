@@ -16,7 +16,7 @@ The engine advances by `step(state, intents, rng) → (state', events)`.
 - AC3: Each tick advances in-game time by `tick_minutes` (parameter, default 1).
 
 ### REQ-SIM-003: Day/night and seasons
-Must · M1 · Accepted
+Must · M1 · Implemented
 - AC1: The day length and season lengths are parameters. The current time of day and season can be derived from the tick.
 - AC2: In winter, sowing actions are rejected and the food and warmth need rates are multiplied by the winter modifier.
 
@@ -59,7 +59,7 @@ Must · M1 · Implemented
 - AC1: Placing a construction site requires valid terrain and a free footprint.
 - AC2: Construction completes when all cost items have been delivered and all build work has been done.
 - AC3: A completed building provides its declared capacity, storage, housing and hosted recipes.
-- AC4: The v1 base pack includes: house, storehouse, farm, fishing hut, lumber camp, quarry, mine, smithy, mint, town hall, palisade and school.
+- AC4: The v1 base pack includes: house, storehouse, farm, fishing hut, lumber camp, quarry, mine, smithy, mint, town hall, palisade, school, mill and bakery.
 
 ### REQ-SIM-010: Recipes and tools
 Must · M1 · Implemented
@@ -73,7 +73,7 @@ Should · M1 · Implemented
 - AC3: The base pack ships at least 2 sample technologies researchable at the school.
 
 ### REQ-SIM-012: Villager needs
-Must · M1 · Accepted
+Must · M1 · Implemented
 - AC1: Hunger, energy and warmth change per tick at their (modified) rates.
 - AC2: A villager whose hunger reaches 100 loses health at the starvation rate. At health 0 they die with cause `starvation`. Cold works the same way (cause `cold`).
 - AC3: Eating consumes food items and reduces hunger by each item's nutrition value. Sleeping in a house restores energy faster than sleeping outdoors.
@@ -89,7 +89,7 @@ Should · M1 · Implemented
 - AC2: Skill level applies a work-speed modifier for the matching actions.
 
 ### REQ-SIM-015: Couples and births
-Must · M1 · Accepted
+Must · M1 · Implemented
 - AC1: Two adults can be recorded as a couple only through a mutual-consent outcome.
 - AC2: A child is born after `gestation_days` if the couple has a house with free capacity and the village food stock is at or above the threshold. Otherwise pregnancy does not start.
 - AC3: Birth-rate parameters allow population doubling within a configurable number of in-game days in good conditions (Timberborn-like growth).
@@ -101,12 +101,12 @@ Must · M1 · Accepted
 - AC3: The new adult's memory is seeded from the notable events it witnessed.
 
 ### REQ-SIM-017: Death
-Must · M1 · Accepted
+Must · M1 · Implemented
 - AC1: Death causes include starvation, cold, old age, raid and epidemic, each recorded in the death event.
 - AC2: Past `old_age`, the death probability per day follows the configured curve.
 - AC3: A dead villager's inventory and property are handled by the inheritance rule (default: partner, then children, then communal).
 
 ### REQ-SIM-018: Engine invariants
-Must · M1 · Accepted
+Must · M1 · Implemented
 - AC1: Items are conserved. Item totals change only through recipes, harvests, consumption, decay, god powers and interventions, each with an event.
 - AC2: Invariant checks run in tests (property-based) and in debug mode on every tick.

@@ -137,3 +137,14 @@ def test_default_config_is_the_four_season_year() -> None:
     assert DEFAULT_CALENDAR.seasons[3].blocked_tags == ("sowing",)
     assert default_config(carry_limit=5.0).carry_limit == 5.0
     assert default_config().calendar == DEFAULT_CALENDAR
+
+
+@pytest.mark.req("REQ-SIM-003")
+def test_the_default_winter_raises_food_and_warmth_needs() -> None:
+    """AC2: the playable winter multiplies hunger and cold rates (values tweakable in the file)."""
+    winter = DEFAULT_CALENDAR.seasons[3]
+    assert winter.modifiers == (
+        Modifier(Target("need", "hunger"), "rate", Op.MUL, 1.5, "season:winter"),
+        Modifier(Target("need", "cold"), "rate", Op.MUL, 6.0, "season:winter"),
+    )
+    assert all(s.modifiers == () for s in DEFAULT_CALENDAR.seasons[:3])

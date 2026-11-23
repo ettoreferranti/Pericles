@@ -1,5 +1,5 @@
 actions:
-  - {id: gather_berries, duration_ticks: 30, outputs: {berries: 3}, skill: foraging, location: {node: berry_bush}, tags: [labour]}
+  - {id: gather_berries, duration_ticks: 30, outputs: {berries: 3}, skill: foraging, location: {node: berry_bush}, tags: [labour, light]}
   - {id: fell_tree, duration_ticks: 60, outputs: {wood: 2}, skill: woodcutting, location: {node: tree}, tags: [labour]}
   - {id: quarry_stone, duration_ticks: 90, outputs: {stone: 2}, skill: masonry, location: {node: boulder}, tags: [labour]}
   - {id: mine_iron, duration_ticks: 120, outputs: {iron_ore: 1}, skill: mining, location: {node: iron_deposit}, tags: [labour]}

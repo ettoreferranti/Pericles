@@ -1,7 +1,7 @@
 import json
 from collections import Counter
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import ClassVar
 
 import pytest
@@ -9,6 +9,7 @@ from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 
 from pericles.core.buildings import Building, Ownership
+from pericles.core.calendar import Calendar, Season
 from pericles.core.canonical import canonical_json
 from pericles.core.config import EngineConfig
 from pericles.core.content.registry import Registry
@@ -17,14 +18,19 @@ from pericles.core.engine import Engine
 from pericles.core.events import Event, EventSink
 from pericles.core.geometry import Coord
 from pericles.core.intents import (
+    AcceptCouple,
     Construct,
     Craft,
     Deliver,
     Deposit,
+    Eat,
     Intent,
     MoveTo,
     PlaceBuilding,
+    ProposeCouple,
     Research,
+    SetHome,
+    Sleep,
     StartAction,
     Take,
     Wait,
@@ -38,7 +44,14 @@ from pericles.core.invariants import (
 )
 from pericles.core.inventory import EPSILON, Inventory, Tool
 from pericles.core.nodes import Node
-from pericles.core.state import Activity, Villager, WorldState
+from pericles.core.state import (
+    Activity,
+    Deceased,
+    Pregnancy,
+    Proposal,
+    Villager,
+    WorldState,
+)
 
 MakeWorld = Callable[..., WorldState]
 COMMUNAL = Ownership("communal")
@@ -438,3 +451,198 @@ def test_debug_mode_reports_all_problems_in_one_error(
     assert str(info.value) == (
         "tick 0: item 'berries': expected 6, found 7; item 'seed': expected 3, found 7"
     )
+
+
+def _set_need(vid: str, need: str, level: float) -> Callable[[WorldState], object]:
+    return lambda s: s.villagers[vid].needs.update({need: level})
+
+
+def _set_attr(vid: str, name: str, value: object) -> Callable[[WorldState], object]:
+    return lambda s: setattr(s.villagers[vid], name, value)
+
+
+def _child_with_partner(s: WorldState) -> None:
+    s.villagers["c"].adult = False
+    s.villagers["c"].partner = "a"
+
+
+def _pregnant_child(s: WorldState) -> None:
+    s.villagers["c"].adult = False
+    s.villagers["c"].pregnancy = Pregnancy("a", 9)
+
+
+def _both_living_and_dead(s: WorldState) -> None:
+    s.dead["c"] = Deceased("c", "C", None, 0, 0, "cold", (), None)
+
+
+def _dead_owner(s: WorldState) -> None:
+    s.buildings["b0"].ownership = Ownership("personal", ("d",))
+
+
+def _dead_proposal_target(s: WorldState) -> None:
+    s.proposals["c"] = Proposal("d", 9)
+
+
+def _incomplete_home(s: WorldState) -> None:
+    s.buildings["b0"].complete = False
+
+
+@pytest.mark.req("REQ-SIM-018")
+@pytest.mark.parametrize(
+    ("break_it", "message"),
+    [
+        (_set_need("a", "hunger", 101.0), "villager a hunger 101 outside 0..100"),
+        (_set_need("a", "mood", 1.0), "villager a has unknown need mood"),
+        (_set_attr("a", "damage", -1.0), "villager a damage -1 outside [0, 100)"),
+        (_set_attr("a", "damage", 100.0), "villager a damage 100 outside [0, 100)"),
+        (_set_attr("a", "partner", "zz"), "villager a partner zz is not living"),
+        (_set_attr("a", "partner", "c"), "villager a partner c is not partnered back"),
+        (_set_attr("a", "home", "b9"), "villager a home b9 is not a completed house"),
+        (_incomplete_home, "villager a home b0 is not a completed house"),
+        (_child_with_partner, "child c has a partner"),
+        (_pregnant_child, "child c is pregnant"),
+        (_both_living_and_dead, "c is both living and dead"),
+        (_dead_owner, "building b0 is owned by the dead d"),
+        (_dead_proposal_target, "proposal c\u2192d names the dead d"),
+    ],
+)
+def test_life_state_checks_name_the_broken_rule(
+    life: Registry,
+    make_world: MakeWorld,
+    break_it: Callable[[WorldState], object],
+    message: str,
+) -> None:
+    """AC2: the invariant checker covers needs, health, couples, homes, children and the dead."""
+    state = make_world(
+        ["......", "......"],
+        [
+            Villager("a", "A", Coord(0, 0), home="b0", partner="b", sex="female"),
+            Villager("b", "B", Coord(0, 0), home="b0", partner="a", sex="male"),
+            Villager("c", "C", Coord(0, 0)),
+        ],
+    )
+    state.buildings["b0"] = Building(
+        "b0", "lodge", Coord(3, 0), Ownership("communal"), complete=True
+    )
+    state.dead["d"] = Deceased("d", "D", None, 0, 0, "cold", (), None)
+    ctx = Engine(life).context
+    assert check_state(ctx, state) == []
+    break_it(state)
+    assert message in check_state(ctx, state)
+
+
+@pytest.mark.req("REQ-SIM-018")
+def test_an_overfull_house_is_reported(life: Registry, make_world: MakeWorld) -> None:
+    """AC2: residents plus pregnancies never exceed housing."""
+    people = [Villager(f"r{i}", "R", Coord(0, 0), home="h") for i in range(5)]
+    people[0].pregnancy = Pregnancy("r1", 9)
+    state = make_world(["......", "......"], people)
+    state.buildings["h"] = Building("h", "cabin", Coord(4, 0), Ownership("communal"), complete=True)
+    assert "building h houses 6, over its housing 5" in check_state(Engine(life).context, state)
+
+
+LIFE_VIDS = ["a", "b", "c", "d", "e", "f"]
+LIFE_INTENT = st.one_of(
+    st.builds(
+        Eat, st.sampled_from(LIFE_VIDS), st.sampled_from(["berries", "wood"]), st.integers(0, 3)
+    ),
+    st.builds(Sleep, st.sampled_from(LIFE_VIDS)),
+    st.builds(ProposeCouple, st.sampled_from(LIFE_VIDS), st.sampled_from(LIFE_VIDS)),
+    st.builds(AcceptCouple, st.sampled_from(LIFE_VIDS), st.sampled_from(LIFE_VIDS)),
+    st.builds(SetHome, st.sampled_from(LIFE_VIDS), st.sampled_from(["b0", "b1", "b9"])),
+)
+LIVES = st.lists(st.lists(LIFE_INTENT, max_size=4), min_size=1, max_size=150)
+LIFE_CONFIG = EngineConfig(
+    calendar=Calendar(
+        seasons=(Season("year", 100),), day_minutes=4, sunrise_minute=0, sunset_minute=2
+    ),
+    adult_age_days=3,
+    old_age_days=6,
+    old_age_death_chance=0.2,
+    gestation_days=2,
+    birth_interval_days=1,
+    conception_chance_per_day=0.8,
+    birth_food_per_capita=0.0,
+    couple_proposal_ttl_ticks=8,
+    debug_invariants=True,
+)
+
+
+def life_world(make_world: MakeWorld) -> WorldState:
+    people = [
+        Villager(
+            vid,
+            vid.upper(),
+            Coord(1, 1),
+            sex="female" if i % 2 == 0 else "male",
+            born_tick=-4 * i,
+            inventory=Inventory({"berries": 6}) if i < 3 else Inventory(),
+            model=f"m{i % 2}",
+        )
+        for i, vid in enumerate(LIFE_VIDS)
+    ]
+    state = make_world(["........", "........", "........"], people)
+    state.buildings["b0"] = Building(
+        "b0", "lodge", Coord(0, 0), Ownership("communal"), complete=True
+    )
+    state.buildings["b1"] = Building(
+        "b1", "cabin", Coord(3, 1), Ownership("communal"), complete=True
+    )
+    return state
+
+
+@pytest.mark.req("REQ-SIM-018")
+@settings(
+    max_examples=60, deadline=None, suppress_health_check=[HealthCheck.function_scoped_fixture]
+)
+@given(LIVES)
+def test_random_lives_keep_every_invariant(
+    life: Registry, make_world: MakeWorld, ticks: list[list[Intent]]
+) -> None:
+    """AC2: random life (eating, sleeping, couples, homes, births, deaths) never breaks a rule."""
+    state = life_world(make_world)
+    engine = Engine(life, LIFE_CONFIG)
+    for intents in ticks:
+        engine.step(state, intents)  # debug mode raises on any breach
+
+
+@pytest.mark.req("REQ-SIM-018")
+def test_a_scripted_life_reaches_every_phase(life: Registry, make_world: MakeWorld) -> None:
+    """AC1/AC2: births, coming of age, deaths and estates all happen, and the ledger stays exact."""
+    state = life_world(make_world)
+    # A gentler old age than the random lives use, so some villagers outlive it and starve.
+    engine = Engine(life, replace(LIFE_CONFIG, old_age_death_chance=0.02))
+    script: dict[int, list[Intent]] = {
+        0: [ProposeCouple("a", "b"), ProposeCouple("c", "d")],
+        1: [AcceptCouple("b", "a"), AcceptCouple("d", "c")],
+        2: [SetHome("a", "b0"), SetHome("b", "b0"), SetHome("c", "b0"), SetHome("d", "b0")],
+    }
+    kinds: set[str] = set()
+    for tick in range(240):
+        _, events = engine.step(state, script.get(tick, []))
+        kinds |= {e.kind for e in events}
+    assert {"couple_formed", "conceived", "born", "came_of_age", "died"} <= kinds
+    assert {"inherited", "estate_stored", "estate_lost"} & kinds
+    assert any(d.cause == "old_age" for d in state.dead.values())
+    assert any(d.cause == "starvation" for d in state.dead.values())
+
+
+@pytest.mark.req("REQ-SIM-018")
+def test_a_restored_life_snapshot_continues_identically(
+    life: Registry, make_world: MakeWorld
+) -> None:
+    """Snapshots carry the whole life state: a restored world replays the same future."""
+    state = life_world(make_world)
+    engine = Engine(life, LIFE_CONFIG)
+    for tick in range(40):
+        intents: list[Intent] = []
+        if tick == 0:
+            intents = [ProposeCouple("a", "b")]
+        elif tick == 1:
+            intents = [AcceptCouple("b", "a")]
+        engine.step(state, intents)
+    copy = WorldState.from_dict(state.to_dict())
+    for _ in range(80):
+        engine.step(state, [])
+        engine.step(copy, [])
+    assert copy.digest() == state.digest()

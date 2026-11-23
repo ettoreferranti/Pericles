@@ -9,7 +9,12 @@ engine:
       - {name: spring, days: 10}
       - {name: summer, days: 10}
       - {name: autumn, days: 10}
-      - {name: winter, days: 10, blocked_tags: [sowing]}
+      - name: winter
+        days: 10
+        blocked_tags: [sowing]
+        modifiers:
+          - {target: {kind: need, id: hunger}, attribute: rate, op: mul, value: 1.5}
+          - {target: {kind: need, id: cold}, attribute: rate, op: mul, value: 6.0}
   carry_limit: 30.0
   max_skill: 100.0
   skill_practice: 1.0
