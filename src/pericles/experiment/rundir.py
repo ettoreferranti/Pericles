@@ -23,7 +23,7 @@ class RunDirectoryError(Exception):
 
 
 class RunDirectory:
-    SCHEMA_VERSION = 1
+    SCHEMA_VERSION = 2
 
     def __init__(self, path: Path) -> None:
         self.path = path

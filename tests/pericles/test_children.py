@@ -63,7 +63,7 @@ def test_children_eat_wait_and_try_light_work(life: Registry, make_world: MakeWo
 
 @pytest.mark.req("REQ-SIM-016")
 def test_an_adult_may_do_what_a_child_may_not(life: Registry, make_world: MakeWorld) -> None:
-    """The filter is about age: the same labour intent from an adult is not `too_young`."""
+    """AC1: The filter is about age: the same labour intent from an adult is not `too_young`."""
     state = make_world(ROWS, [villager("a")])
     _, events = Engine(life).step(state, [StartAction("a", "pick")])
     assert "too_young" not in rejected(events)

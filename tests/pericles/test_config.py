@@ -55,7 +55,7 @@ def test_boundary_values_are_accepted(kwargs: dict[str, float]) -> None:
 
 @pytest.mark.req("REQ-SIM-012")
 def test_life_defaults_are_valid() -> None:
-    """The core defaults describe a working life cycle."""
+    """AC1: The core defaults describe a working life cycle."""
     config = EngineConfig()
     assert config.max_health == 100.0
     assert config.sexes == ("female", "male")
@@ -111,7 +111,7 @@ def test_life_defaults_are_valid() -> None:
     ],
 )
 def test_invalid_life_parameters_are_rejected(kwargs: dict[str, object], message: str) -> None:
-    """Every life parameter is validated, with a message naming the rule."""
+    """AC1: Every life parameter is validated, with a message naming the rule."""
     with pytest.raises(ValueError, match=f"^{message}$"):
         EngineConfig(**kwargs)  # type: ignore[arg-type]
 
@@ -144,13 +144,13 @@ def test_invalid_life_parameters_are_rejected(kwargs: dict[str, object], message
     ],
 )
 def test_life_parameter_boundaries_are_accepted(kwargs: dict[str, object]) -> None:
-    """The inclusive ends of each range are valid."""
+    """AC1: The inclusive ends of each range are valid."""
     EngineConfig(**kwargs)  # type: ignore[arg-type]
 
 
 @pytest.mark.req("REQ-SIM-012")
 def test_several_broken_rules_are_all_reported() -> None:
-    """One message per broken rule, joined in rule order."""
+    """AC1: One message per broken rule, joined in rule order."""
     with pytest.raises(ValueError) as error:
         EngineConfig(max_health=0.0, gestation_days=0)
     assert str(error.value) == "max_health must be positive; gestation_days must be positive"

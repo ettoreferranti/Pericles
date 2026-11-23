@@ -3,6 +3,7 @@ coming of age (REQ-SIM-016, REQ-SIM-017; ADR-0015 §5, §9, §10)."""
 
 from __future__ import annotations
 
+import math
 from collections.abc import Iterable
 
 from pericles.core import work
@@ -138,14 +139,20 @@ def die(ctx: Context, state: WorldState, vid: str, cause: str, sink: EventSink) 
 def old_age_deaths(ctx: Context, state: WorldState, sink: EventSink) -> None:
     """The daily old-age roll (REQ-SIM-017 AC2); one draw per villager past old age, by id.
 
-    A chance above 1 always kills, since the draw is below 1, so no explicit cap is needed.
+    A chance above 1 always kills, since the draw is below 1; a power too large for a float is
+    treated as certain death. A chance of 0 draws nothing.
     """
     config = ctx.config
+    if config.old_age_death_chance == 0:
+        return
     for vid in sorted(state.villagers):
         past = age_days(ctx, state, state.villagers[vid]) - config.old_age_days
         if past < 0:
             continue
-        chance = config.old_age_death_chance * config.old_age_death_growth**past  # may exceed 1
+        try:
+            chance = config.old_age_death_chance * config.old_age_death_growth**past  # may exceed 1
+        except OverflowError:
+            chance = math.inf
         if state.rng.random() < chance:
             die(ctx, state, vid, OLD_AGE, sink)
 

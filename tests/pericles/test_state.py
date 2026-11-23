@@ -213,7 +213,7 @@ def full_villager() -> Villager:
 
 
 def test_life_fields_have_neutral_defaults() -> None:
-    """A villager built without life fields is a healthy adult of unknown sex with no family."""
+    """AC1: A villager without life fields is a healthy adult of unknown sex with no family."""
     villager = Villager("v1", "Ana", Coord(0, 0))
     assert villager.sex is None
     assert (villager.born_tick, villager.adult, villager.damage) == (0, True, 0.0)
@@ -231,7 +231,7 @@ def test_a_villager_with_life_fields_round_trips() -> None:
 
 
 def test_world_life_fields_round_trip() -> None:
-    """The dead, open proposals and the id counter survive a snapshot."""
+    """AC1: The dead, open proposals and the id counter survive a snapshot."""
     tilemap = TileMap(2, 2, ["grass"] * 4, [0.0] * 4)
     state = WorldState.new(1, tilemap, [full_villager()])
     state.dead["v9"] = Deceased("v9", "Old", "male", -9000, 40, "old_age", ("v5",), "qwen")
@@ -261,7 +261,7 @@ def test_world_life_fields_round_trip() -> None:
     ],
 )
 def test_life_fields_feed_the_digest(change: Callable[[Villager], object]) -> None:
-    """Every life field is part of the canonical state."""
+    """AC1: Every life field is part of the canonical state."""
     tilemap = TileMap(2, 2, ["grass"] * 4, [0.0] * 4)
     before = WorldState.new(1, tilemap, [full_villager()])
     after = WorldState.new(1, tilemap, [full_villager()])
@@ -270,7 +270,7 @@ def test_life_fields_feed_the_digest(change: Callable[[Villager], object]) -> No
 
 
 def test_life_pack_loads(life: Registry) -> None:
-    """The life test pack adds needs, a hardy trait, a lodge, a cabin and a light action."""
+    """AC1: The life test pack adds needs, a hardy trait, a lodge, a cabin and a light action."""
     assert sorted(life.needs) == ["cold", "fatigue", "hunger"]
     assert life.needs["hunger"].relief == "eat"
     assert life.buildings["lodge"].housing == 8

@@ -68,7 +68,10 @@ def test_starvation_kills_through_the_engine(life: Registry, make_world: MakeWor
 
 @pytest.mark.req("REQ-SIM-017")
 def test_old_age_death_follows_the_curve(life: Registry, make_world: MakeWorld) -> None:
-    """AC2: past old age the daily chance is chance x growth^(days past), capped at 1."""
+    """AC2: past old age the daily chance is chance x growth^(days past).
+
+    A chance of 1 or more always kills.
+    """
     config = EngineConfig(
         calendar=SHORT_DAYS,
         adult_age_days=1,
@@ -577,3 +580,37 @@ def test_a_stored_estate_is_not_stored_again_in_the_next_store(
         ("b0", 30)
     ]
     assert second.storage.count("berries") == 0
+
+
+@pytest.mark.req("REQ-SIM-017")
+def test_chance_zero_draws_nothing_however_old(life: Registry, make_world: MakeWorld) -> None:
+    """AC2: with chance 0 nobody dies, nothing overflows and the rng is untouched."""
+    config = EngineConfig(
+        calendar=SHORT_DAYS,
+        adult_age_days=1,
+        old_age_days=1,
+        old_age_death_chance=0.0,
+        old_age_death_growth=2.0,
+    )
+    ctx = Engine(life, config).context
+    state = make_world(ROWS, [person("old", born_tick=-4 * 100000)])
+    before = state.rng.getstate()
+    lifecycle.old_age_deaths(ctx, state, EventSink(0))
+    assert "old" in state.villagers
+    assert state.rng.getstate() == before
+
+
+@pytest.mark.req("REQ-SIM-017")
+def test_a_huge_chance_power_means_certain_death(life: Registry, make_world: MakeWorld) -> None:
+    """AC2: growth^(days past) too large for a float still kills, without crashing."""
+    config = EngineConfig(
+        calendar=SHORT_DAYS,
+        adult_age_days=1,
+        old_age_days=1,
+        old_age_death_chance=0.001,
+        old_age_death_growth=2.0,
+    )
+    ctx = Engine(life, config).context
+    state = make_world(ROWS, [person("old", born_tick=-4 * 5000)])
+    lifecycle.old_age_deaths(ctx, state, EventSink(0))
+    assert state.dead["old"].cause == "old_age"

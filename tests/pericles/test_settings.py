@@ -96,6 +96,15 @@ def test_settings_build_a_calendar_with_season_modifiers(tmp_path: Path) -> None
             "engine:\n  calendar: {seasons: [{name: a, days: 3, colour: red}]}\n",
             r"^engine\.calendar\.seasons\[0\]\.colour: unknown setting$",
         ),
+        (
+            "engine:\n  calendar: {seasons: [{name: a, days: 3, modifiers: }]}\n",
+            r"^engine\.calendar\.seasons\[0\]\.modifiers: expected a list$",
+        ),
+        (
+            "engine:\n  calendar: {seasons: [{name: a, days: 3, modifiers: 3}]}\n",
+            r"^engine\.calendar\.seasons\[0\]\.modifiers: expected a list$",
+        ),
+        ("engine:\n  calendar: {seasons: 3}\n", r"^engine\.calendar\.seasons: expected a list$"),
         ("engine: 3\n", r"^engine: expected a mapping$"),
         ("map: {}\n", r"^map: unknown section$"),
         ("engine: {carry_limit: 1}\nengine: {carry_limit: 2}\n", r"duplicate key 'engine'"),

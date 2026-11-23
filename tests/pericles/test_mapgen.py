@@ -274,13 +274,13 @@ def test_tolerance_boundaries_are_inclusive(registry: Registry, map_params: MapP
 def test_noise_parameters_are_validated(
     map_params: MapParams, registry: Registry, change: dict[str, Any], message: str
 ) -> None:
-    """The noise tuning values are parameters, validated like the others."""
+    """AC1: The noise tuning values are parameters, validated like the others."""
     with pytest.raises(ValueError, match=message):
         generate_map(7, replace(map_params, **change), registry)
 
 
 def test_noise_parameters_change_the_map(map_params: MapParams, registry: Registry) -> None:
-    """Persistence really feeds the noise (it is not a dead parameter)."""
+    """AC1: Persistence really feeds the noise (it is not a dead parameter)."""
     base = generate_map(7, map_params, registry).digest()
     rougher = generate_map(7, replace(map_params, persistence=0.9), registry).digest()
     assert rougher != base
@@ -289,6 +289,6 @@ def test_noise_parameters_change_the_map(map_params: MapParams, registry: Regist
 def test_noise_parameters_accept_their_lower_bounds(
     map_params: MapParams, registry: Registry
 ) -> None:
-    """The documented bounds are inclusive: persistence 1, lacunarity 1 and divisor 1 are valid."""
+    """AC1: The bounds are inclusive: persistence 1, lacunarity 1 and divisor 1 are valid."""
     edge = replace(map_params, persistence=1.0, lacunarity=1, vein_feature_divisor=1)
     assert generate_map(7, edge, registry).width == map_params.width

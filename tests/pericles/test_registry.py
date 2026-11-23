@@ -296,7 +296,7 @@ actions:
 
 @pytest.mark.req("REQ-SIM-012")
 def test_need_fields_parse(tmp_path: Path) -> None:
-    """Needs carry damage, a death cause and a relief kind (ADR-0015 §1 and §2)."""
+    """AC2: Needs carry damage, a death cause and a relief kind (ADR-0015 §1 and §2)."""
     root = tmp_path / "p"
     root.mkdir()
     (root / "content.yaml").write_text(
@@ -315,7 +315,7 @@ def test_need_fields_parse(tmp_path: Path) -> None:
 
 @pytest.mark.req("REQ-SIM-012")
 def test_a_damaging_need_must_name_a_death_cause(tmp_path: Path) -> None:
-    """A need that can kill must say what the death is called (ADR-0015 §2)."""
+    """AC2: A need that can kill must say what the death is called (ADR-0015 §2)."""
     root = tmp_path / "p"
     root.mkdir()
     (root / "content.yaml").write_text(
@@ -330,7 +330,7 @@ def test_a_damaging_need_must_name_a_death_cause(tmp_path: Path) -> None:
 
 @pytest.mark.req("REQ-SIM-012")
 def test_an_unknown_relief_kind_is_rejected(tmp_path: Path) -> None:
-    """Relief is one of eat, sleep or shelter."""
+    """AC3: Relief is one of eat, sleep or shelter."""
     root = tmp_path / "p"
     root.mkdir()
     (root / "content.yaml").write_text(
@@ -342,7 +342,7 @@ def test_an_unknown_relief_kind_is_rejected(tmp_path: Path) -> None:
 
 @pytest.mark.req("REQ-SIM-012")
 def test_a_small_positive_damage_still_needs_a_death_cause(tmp_path: Path) -> None:
-    """Any damage above zero needs a death cause; zero damage does not."""
+    """AC2: Any damage above zero needs a death cause; zero damage does not."""
     root = make_pack(
         tmp_path, "p", "needs:\n  - {id: hunger, rate_per_hour: 4, damage_per_hour: 0.5}\n"
     )

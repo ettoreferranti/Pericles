@@ -133,7 +133,7 @@ def test_season_at_returns_the_season_with_its_blocked_tags() -> None:
 
 @pytest.mark.req("REQ-SIM-012")
 def test_seasons_carry_modifiers() -> None:
-    """Seasons hold the modifiers they apply (ADR-0015 §1); none by default."""
+    """AC1: Seasons hold the modifiers they apply (ADR-0015 §1); none by default."""
     assert Season("spring", 10).modifiers == ()
     cold = Modifier(Target("need", "cold"), "rate", Op.MUL, 4.0, "season:winter")
     winter = Season("winter", 10, blocked_tags=("sowing",), modifiers=(cold,))

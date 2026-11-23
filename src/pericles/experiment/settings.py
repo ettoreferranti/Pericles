@@ -58,10 +58,11 @@ def _values(
 def _season(data: object, where: str) -> Season:
     season = _mapping(data, where)
     values = _values(Season, season, where, nested={"modifiers"})
+    raw = season.get("modifiers", [])
+    if not isinstance(raw, list):
+        raise SettingsError(f"{where}.modifiers: expected a list")
     try:
-        defs = TypeAdapter(tuple[ModifierDef, ...]).validate_python(
-            tuple(season.get("modifiers", ()))
-        )
+        defs = TypeAdapter(tuple[ModifierDef, ...]).validate_python(tuple(raw))
     except ValidationError as error:
         first = error.errors()[0]
         loc = ".".join(str(part) for part in first["loc"])

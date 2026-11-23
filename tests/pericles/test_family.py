@@ -332,7 +332,7 @@ def test_conception_chance_uses_the_seeded_rng(life: Registry, make_world: MakeW
 
 @pytest.mark.req("REQ-SIM-015")
 def test_child_ids_skip_used_ids_and_names_cycle(life: Registry, make_world: MakeWorld) -> None:
-    """New villagers get fresh ids v<n> (never reused, even from the dead) and listed names."""
+    """AC2: New villagers get fresh ids v<n> (never reused, even from the dead) and listed names."""
     engine, state = family(life, make_world, child_names=("Io", "Eos"))
     state.villagers["v0"] = adult("v0")
     state.dead["v1"] = Deceased("v1", "Old", None, 0, 0, "cold", (), None)
@@ -440,7 +440,7 @@ def test_an_unrested_mother_does_not_block_later_mothers(
 def test_a_birth_event_names_everyone_and_ids_step_by_one(
     life: Registry, make_world: MakeWorld
 ) -> None:
-    """The born event carries child, mother, father and sex; the next free id is used."""
+    """AC2: The born event carries child, mother, father and sex; the next free id is used."""
     engine, state = family(life, make_world)
     state.villagers["v0"] = adult("v0")
     state.villagers["a"].pregnancy = Pregnancy("b", state.tick)

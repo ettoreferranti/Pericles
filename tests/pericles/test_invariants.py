@@ -542,14 +542,16 @@ def test_an_overfull_house_is_reported(life: Registry, make_world: MakeWorld) ->
 
 
 LIFE_VIDS = ["a", "b", "c", "d", "e", "f"]
+LIFE_ACTORS = [*LIFE_VIDS, *(f"v{i}" for i in range(6))]  # the founders and children born later
+LIFE_ACTORS_ST = st.sampled_from(LIFE_ACTORS)
+LIFE_ACTIONS = st.sampled_from([("chop", "n0"), ("glean", "n1"), ("glean", "n0"), ("chop", None)])
 LIFE_INTENT = st.one_of(
-    st.builds(
-        Eat, st.sampled_from(LIFE_VIDS), st.sampled_from(["berries", "wood"]), st.integers(0, 3)
-    ),
-    st.builds(Sleep, st.sampled_from(LIFE_VIDS)),
-    st.builds(ProposeCouple, st.sampled_from(LIFE_VIDS), st.sampled_from(LIFE_VIDS)),
-    st.builds(AcceptCouple, st.sampled_from(LIFE_VIDS), st.sampled_from(LIFE_VIDS)),
-    st.builds(SetHome, st.sampled_from(LIFE_VIDS), st.sampled_from(["b0", "b1", "b9"])),
+    st.builds(Eat, LIFE_ACTORS_ST, st.sampled_from(["berries", "wood"]), st.integers(0, 3)),
+    st.builds(Sleep, LIFE_ACTORS_ST),
+    st.builds(ProposeCouple, LIFE_ACTORS_ST, LIFE_ACTORS_ST),
+    st.builds(AcceptCouple, LIFE_ACTORS_ST, LIFE_ACTORS_ST),
+    st.builds(SetHome, LIFE_ACTORS_ST, st.sampled_from(["b0", "b1", "b2", "b3", "b9"])),
+    LIFE_ACTIONS.flatmap(lambda pair: st.builds(StartAction, LIFE_ACTORS_ST, *map(st.just, pair))),
 )
 LIVES = st.lists(st.lists(LIFE_INTENT, max_size=4), min_size=1, max_size=150)
 LIFE_CONFIG = EngineConfig(
@@ -568,7 +570,7 @@ LIFE_CONFIG = EngineConfig(
 )
 
 
-def life_world(make_world: MakeWorld) -> WorldState:
+def life_world(make_world: MakeWorld, paired: bool = False) -> WorldState:
     people = [
         Villager(
             vid,
@@ -576,18 +578,34 @@ def life_world(make_world: MakeWorld) -> WorldState:
             Coord(1, 1),
             sex="female" if i % 2 == 0 else "male",
             born_tick=-4 * i,
-            inventory=Inventory({"berries": 6}) if i < 3 else Inventory(),
+            inventory=Inventory({"berries": 6}, [Tool("axe", 40)])
+            if vid == "a"
+            else Inventory({"berries": 6})
+            if i < 3
+            else Inventory(),
             model=f"m{i % 2}",
         )
         for i, vid in enumerate(LIFE_VIDS)
     ]
-    state = make_world(["........", "........", "........"], people)
+    nodes = [Node("n0", "tree", Coord(1, 1), 6, 0.5), Node("n1", "bush", Coord(1, 1), 4, 0.5)]
+    state = make_world(["........", "........", "........"], people, nodes=nodes)
     state.buildings["b0"] = Building(
         "b0", "lodge", Coord(0, 0), Ownership("communal"), complete=True
     )
     state.buildings["b1"] = Building(
         "b1", "cabin", Coord(3, 1), Ownership("communal"), complete=True
     )
+    state.buildings["b2"] = Building(
+        "b2", "cabin", Coord(5, 1), Ownership("personal", ("c",)), complete=True
+    )
+    state.buildings["b3"] = Building(
+        "b3", "cabin", Coord(6, 1), Ownership("shared", ("d", "e")), complete=True
+    )
+    if paired:  # two settled couples, so births (and children acting) are common in the fuzz
+        for one, other, home in (("a", "b", "b0"), ("c", "d", "b2")):
+            for vid in (one, other):
+                state.villagers[vid].partner = one if vid == other else other
+                state.villagers[vid].home = home
     return state
 
 
@@ -600,7 +618,7 @@ def test_random_lives_keep_every_invariant(
     life: Registry, make_world: MakeWorld, ticks: list[list[Intent]]
 ) -> None:
     """AC2: random life (eating, sleeping, couples, homes, births, deaths) never breaks a rule."""
-    state = life_world(make_world)
+    state = life_world(make_world, paired=True)
     engine = Engine(life, LIFE_CONFIG)
     for intents in ticks:
         engine.step(state, intents)  # debug mode raises on any breach
@@ -631,7 +649,7 @@ def test_a_scripted_life_reaches_every_phase(life: Registry, make_world: MakeWor
 def test_a_restored_life_snapshot_continues_identically(
     life: Registry, make_world: MakeWorld
 ) -> None:
-    """Snapshots carry the whole life state: a restored world replays the same future."""
+    """AC2: Snapshots carry the whole life state: a restored world replays the same future."""
     state = life_world(make_world)
     engine = Engine(life, LIFE_CONFIG)
     for tick in range(40):
