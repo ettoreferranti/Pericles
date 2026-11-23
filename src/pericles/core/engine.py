@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable, Sequence
 from functools import partial
 
-from pericles.core import construction, work
+from pericles.core import construction, life, work
 from pericles.core.config import EngineConfig
 from pericles.core.content.registry import Registry
 from pericles.core.context import Context
@@ -16,10 +16,12 @@ from pericles.core.intents import (
     Craft,
     Deliver,
     Deposit,
+    Eat,
     Intent,
     MoveTo,
     PlaceBuilding,
     Research,
+    Sleep,
     StartAction,
     Take,
     Wait,
@@ -50,6 +52,8 @@ class Engine:
             Take: partial(construction.take, self.context),
             Craft: partial(work.start_recipe, self.context),
             Research: partial(work.start_research, self.context),
+            Eat: partial(life.eat, self.context),
+            Sleep: partial(life.sleep, self.context),
         }
         self._cache: tuple[TileMap, frozenset[Coord], TerrainCostField] | None = (
             None  # pragma: no mutate - cache sentinel; any non-matching value just forces a rebuild
@@ -86,6 +90,7 @@ class Engine:
             self._handlers[type(intent)](state, intent, sink)
         self._advance_work(state, sink)
         self._advance_movement(state, sink)
+        life.update_needs(self.context, state, sink)
         if (state.tick + 1) % self.config.calendar.ticks_per_day == 0:
             regrow(state.nodes.values(), self.registry)
         state.modifiers = expire(state.modifiers, state.tick + 1)
@@ -101,6 +106,8 @@ class Engine:
             villager = state.villagers[vid]
             activity = villager.activity
             if activity is None:
+                continue
+            if activity.kind == life.SLEEP:
                 continue
             if activity.kind == "construction":
                 construction.progress(self.context, state, villager, sink)
