@@ -4,11 +4,12 @@ age are added in later tasks."""
 from __future__ import annotations
 
 from pericles.core import work
-from pericles.core.buildings import Building, Ownership, storage_capacity
-from pericles.core.context import Context
+from pericles.core.buildings import Building, Ownership, housing_capacity, storage_capacity
+from pericles.core.context import Context, reject
 from pericles.core.events import EventSink
+from pericles.core.intents import AcceptCouple, Intent, ProposeCouple, SetHome
 from pericles.core.inventory import EPSILON, Inventory, transfer
-from pericles.core.state import Deceased, Villager, WorldState
+from pericles.core.state import Deceased, Pregnancy, Proposal, Villager, WorldState
 
 OLD_AGE = "old_age"
 
@@ -145,3 +146,179 @@ def old_age_deaths(ctx: Context, state: WorldState, sink: EventSink) -> None:
         chance = config.old_age_death_chance * config.old_age_death_growth**past  # may exceed 1
         if state.rng.random() < chance:
             die(ctx, state, vid, OLD_AGE, sink)
+
+
+def occupants(state: WorldState, building_id: str) -> int:
+    """Residents plus their unborn children (ADR-0015 §7)."""
+    residents = [v for v in state.villagers.values() if v.home == building_id]
+    return len(residents) + sum(1 for v in residents if v.pregnancy is not None)
+
+
+def _may_live_in(villager: Villager, building: Building) -> bool:
+    ownership = building.ownership
+    return ownership.owned_by(villager.id) or (
+        villager.partner is not None and ownership.owned_by(villager.partner)
+    )
+
+
+def set_home(ctx: Context, state: WorldState, intent: Intent, sink: EventSink) -> None:
+    assert isinstance(intent, SetHome)
+    villager = state.villagers[intent.actor]
+    building = state.buildings.get(intent.building)
+    if building is None:
+        return reject(sink, intent, "unknown_building")
+    if not building.complete:
+        return reject(sink, intent, "incomplete")
+    capacity = housing_capacity(ctx.registry, building)
+    if capacity == 0:
+        return reject(sink, intent, "not_housing")
+    if not _may_live_in(villager, building):
+        return reject(sink, intent, "not_owner")
+    if villager.home != building.id:
+        incoming = 1 + (1 if villager.pregnancy is not None else 0)
+        if occupants(state, building.id) + incoming > capacity:
+            return reject(sink, intent, "house_full")
+    villager.home = building.id
+    sink.emit("moved_in", actor=villager.id, building=building.id)
+    return None
+
+
+def propose_couple(ctx: Context, state: WorldState, intent: Intent, sink: EventSink) -> None:
+    assert isinstance(intent, ProposeCouple)
+    actor = state.villagers[intent.actor]
+    target = state.villagers.get(intent.target)
+    if target is None:
+        return reject(sink, intent, "unknown_target")
+    if target.id == actor.id:
+        return reject(sink, intent, "self")
+    if not target.adult:
+        return reject(sink, intent, "target_too_young")
+    if actor.partner is not None:
+        return reject(sink, intent, "already_partnered")
+    if target.partner is not None:
+        return reject(sink, intent, "target_partnered")
+    expires = state.tick + ctx.config.couple_proposal_ttl_ticks
+    state.proposals[actor.id] = Proposal(target.id, expires)
+    sink.emit("couple_proposed", actor=actor.id, target=target.id, expires_tick=expires)
+    return None
+
+
+def accept_couple(ctx: Context, state: WorldState, intent: Intent, sink: EventSink) -> None:
+    assert isinstance(intent, AcceptCouple)
+    actor = state.villagers[intent.actor]
+    proposal = state.proposals.get(intent.proposer)
+    if proposal is None or proposal.target != actor.id or state.tick >= proposal.expires_tick:
+        return reject(sink, intent, "no_proposal")
+    proposer = state.villagers[intent.proposer]
+    if actor.partner is not None:
+        return reject(sink, intent, "already_partnered")
+    if proposer.partner is not None:
+        return reject(sink, intent, "target_partnered")
+    actor.partner, proposer.partner = proposer.id, actor.id
+    pair = {actor.id, proposer.id}
+    state.proposals = {k: p for k, p in state.proposals.items() if k not in pair}
+    sink.emit("couple_formed", villagers=sorted(pair))
+    return None
+
+
+def expire_proposals(state: WorldState, sink: EventSink) -> None:
+    """Drop proposals that cannot be accepted on the next tick."""
+    for proposer in sorted(state.proposals):
+        proposal = state.proposals[proposer]
+        if proposal.expires_tick <= state.tick + 1:
+            del state.proposals[proposer]
+            sink.emit("couple_proposal_expired", actor=proposer, target=proposal.target)
+
+
+def food_stock(ctx: Context, state: WorldState) -> float:
+    """Total nutrition held by villagers and in buildings' storage (ADR-0015 §7)."""
+    items = ctx.registry.items
+    containers = [v.inventory for v in state.villagers.values()]
+    containers += [b.storage for b in state.buildings.values()]
+    return sum(
+        items[item].nutrition * qty for inv in containers for item, qty in inv.totals().items()
+    )
+
+
+def _fertile_pair(ctx: Context, state: WorldState, mother: Villager) -> Villager | None:
+    config = ctx.config
+    partner = state.villagers.get(mother.partner) if mother.partner is not None else None
+    if (
+        partner is None
+        or not (mother.adult and partner.adult)
+        or mother.sex != config.bearing_sex
+        or partner.sex == config.bearing_sex
+        or partner.sex is None
+        or mother.pregnancy is not None
+    ):
+        return None
+    return partner
+
+
+def _has_room(ctx: Context, state: WorldState, mother: Villager, partner: Villager) -> bool:
+    home = state.buildings.get(mother.home) if mother.home is not None else None
+    return (
+        home is not None
+        and partner.home == home.id
+        and occupants(state, home.id) < housing_capacity(ctx.registry, home)
+    )
+
+
+def _rested(ctx: Context, state: WorldState, mother: Villager) -> bool:
+    if mother.last_birth_tick is None:
+        return True
+    interval = ctx.config.birth_interval_days * ctx.config.calendar.ticks_per_day
+    return state.tick - mother.last_birth_tick >= interval
+
+
+def conceive(ctx: Context, state: WorldState, sink: EventSink) -> None:
+    """The daily conception roll (REQ-SIM-015 AC2). One draw per eligible mother, by id."""
+    config = ctx.config
+    if food_stock(ctx, state) < config.birth_food_per_capita * len(state.villagers):
+        return
+    gestation = config.gestation_days * config.calendar.ticks_per_day
+    for vid in sorted(state.villagers):
+        mother = state.villagers[vid]
+        partner = _fertile_pair(ctx, state, mother)
+        if partner is None or not _has_room(ctx, state, mother, partner):
+            continue
+        if not _rested(ctx, state, mother):
+            continue
+        if state.rng.random() < config.conception_chance_per_day:
+            due = state.tick + gestation
+            mother.pregnancy = Pregnancy(partner.id, due)
+            sink.emit("conceived", mother=vid, father=partner.id, due_tick=due)
+
+
+def _new_id(state: WorldState) -> tuple[str, int]:
+    n = state.next_villager
+    while f"v{n}" in state.villagers or f"v{n}" in state.dead:
+        n += 1
+    state.next_villager = n + 1
+    return f"v{n}", n
+
+
+def births(ctx: Context, state: WorldState, sink: EventSink) -> None:
+    """Deliver every pregnancy due by this tick, mothers by id (REQ-SIM-015 AC2)."""
+    config = ctx.config
+    for vid in sorted(state.villagers):
+        mother = state.villagers[vid]
+        pregnancy = mother.pregnancy
+        if pregnancy is None or pregnancy.due_tick > state.tick:
+            continue
+        child_id, n = _new_id(state)
+        names = config.child_names
+        sex = state.rng.choice(config.sexes)
+        state.villagers[child_id] = Villager(
+            child_id,
+            names[n % len(names)] if names else child_id,
+            mother.pos,
+            sex=sex,
+            born_tick=state.tick,
+            adult=False,
+            home=mother.home,
+            parents=tuple(sorted((vid, pregnancy.father))),
+        )
+        mother.pregnancy = None
+        mother.last_birth_tick = state.tick
+        sink.emit("born", child=child_id, mother=vid, father=pregnancy.father, sex=sex)

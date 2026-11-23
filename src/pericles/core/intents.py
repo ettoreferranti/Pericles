@@ -99,3 +99,21 @@ class Eat(Intent):
 @dataclass(frozen=True)
 class Sleep(Intent):
     kind: ClassVar[str] = "sleep"
+
+
+@dataclass(frozen=True)
+class SetHome(Intent):
+    building: str
+    kind: ClassVar[str] = "set_home"
+
+
+@dataclass(frozen=True)
+class ProposeCouple(Intent):
+    target: str
+    kind: ClassVar[str] = "propose_couple"
+
+
+@dataclass(frozen=True)
+class AcceptCouple(Intent):
+    proposer: str
+    kind: ClassVar[str] = "accept_couple"

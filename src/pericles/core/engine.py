@@ -12,6 +12,7 @@ from pericles.core.context import Context
 from pericles.core.events import Event, EventSink
 from pericles.core.geometry import Coord
 from pericles.core.intents import (
+    AcceptCouple,
     Construct,
     Craft,
     Deliver,
@@ -20,7 +21,9 @@ from pericles.core.intents import (
     Intent,
     MoveTo,
     PlaceBuilding,
+    ProposeCouple,
     Research,
+    SetHome,
     Sleep,
     StartAction,
     Take,
@@ -54,6 +57,9 @@ class Engine:
             Research: partial(work.start_research, self.context),
             Eat: partial(life.eat, self.context),
             Sleep: partial(life.sleep, self.context),
+            SetHome: partial(lifecycle.set_home, self.context),
+            ProposeCouple: partial(lifecycle.propose_couple, self.context),
+            AcceptCouple: partial(lifecycle.accept_couple, self.context),
         }
         self._cache: tuple[TileMap, frozenset[Coord], TerrainCostField] | None = (
             None  # pragma: no mutate - cache sentinel; any non-matching value just forces a rebuild
@@ -96,9 +102,12 @@ class Engine:
         self._advance_movement(state, sink)
         for vid, cause in life.update_needs(self.context, state, sink):
             lifecycle.die(self.context, state, vid, cause, sink)
+        lifecycle.births(self.context, state, sink)
+        lifecycle.expire_proposals(state, sink)
         if (state.tick + 1) % self.config.calendar.ticks_per_day == 0:
             regrow(state.nodes.values(), self.registry)
             lifecycle.old_age_deaths(self.context, state, sink)
+            lifecycle.conceive(self.context, state, sink)
         state.modifiers = expire(state.modifiers, state.tick + 1)
         state.tick += 1
         if before is not None:
