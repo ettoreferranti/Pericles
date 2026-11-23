@@ -151,7 +151,7 @@ def construct(ctx: Context, state: WorldState, intent: Intent, sink: EventSink) 
         building=building.id,
     )
     return start_work(
-        ctx,
+        ctx,  # pragma: no mutate - ctx only reserves inputs; none here
         villager,
         intent,
         sink,

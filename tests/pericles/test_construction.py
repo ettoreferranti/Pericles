@@ -16,8 +16,9 @@ from pericles.core.intents import (
     PlaceBuilding,
     Take,
 )
-from pericles.core.inventory import Tool
-from pericles.core.modifiers import Modifier, Op, Target
+from pericles.core.inventory import EPSILON, Tool
+from pericles.core.mapgen import TileMap
+from pericles.core.modifiers import Modifier, Op, Scope, Target
 from pericles.core.nodes import Node
 from pericles.core.state import Villager, WorldState
 
@@ -145,7 +146,7 @@ def test_invalid_placements_are_rejected(
     existing_hut: bool,
     reason: str,
 ) -> None:
-    """AC1: placement needs a known, unlocked kind, valid ownership, terrain and a free footprint."""
+    """AC1: placement needs a known, unlocked kind, valid ownership, terrain and free ground."""
     state = world(make_world)
     if existing_hut:
         with_hut(state)
@@ -451,3 +452,116 @@ def test_a_store_fills_up_to_its_capacity(econ: Registry, make_world: MakeWorld)
     events = Engine(econ).step(state, [Deposit("a", "b0", "wood", 1)])[1]
     assert [event.kind for event in events] == ["item_deposited"]
     assert state.buildings["b0"].storage.items == {"wood": 10}
+
+
+@pytest.mark.req("REQ-SIM-009")
+def test_held_tools_and_scoped_modifiers_speed_up_building(
+    econ: Registry, make_world: MakeWorld
+) -> None:
+    """AC2: a held hammer and a modifier scoped to this site both apply to its build speed."""
+    state = world(make_world)
+    with_hut(state).delivered = {"wood": 4}
+    state.villagers["a"].inventory.add_tools([Tool("hammer", 2)])
+    state.villagers["b"].inventory.add_tools([Tool("hammer", 2)])
+    state.modifiers = (
+        Modifier(
+            Target("building", "hut"), "work_speed", Op.MUL, 2.0, "scoped", Scope(building="b0")
+        ),
+    )
+    events = Engine(econ).step(state, [Construct("a", "b0")])[1]
+    started = of(events, "work_started")
+    assert started == [
+        {"actor": "a", "work": "construction", "ident": "hut", "target": "b0", "ticks": 5}
+    ]
+    assert state.villagers["a"].activity is not None
+    assert state.villagers["a"].activity.speed == 4.0
+    state.buildings["b0"].work_done = 0.0
+    state.modifiers = (
+        Modifier(
+            Target("building", "hut"), "work_speed", Op.MUL, 2.0, "scoped", Scope(building="b7")
+        ),
+    )
+    started = of(Engine(econ).step(state, [Construct("b", "b0")])[1], "work_started")
+    assert started[0]["ticks"] == 10
+
+
+@pytest.mark.req("REQ-SIM-009")
+def test_construction_progress_is_visible_on_the_activity(
+    econ: Registry, make_world: MakeWorld
+) -> None:
+    """AC2: the builder's activity mirrors the work done on the site."""
+    state = world(make_world)
+    hut = with_hut(state)
+    hut.delivered = {"wood": 4}
+    engine = Engine(econ)
+    run(engine, state, [Construct("a", "b0")], 3)
+    activity = state.villagers["a"].activity
+    assert activity is not None
+    assert (activity.done, hut.work_done) == (3.0, 3.0)
+
+
+@pytest.mark.req("REQ-SIM-009")
+def test_construction_completes_at_the_epsilon_boundary(
+    econ: Registry, make_world: MakeWorld
+) -> None:
+    """AC2: work within epsilon of the total completes the building."""
+    state = world(make_world)
+    hut = with_hut(state)
+    hut.delivered = {"wood": 4}
+    hut.work_done = 19.0 - EPSILON
+    assert hut.work_done + 1.0 == 20.0 - EPSILON
+    events = run(Engine(econ), state, [Construct("a", "b0")], 1)
+    assert [event.kind for event in events] == ["work_started", "building_completed", "work_done"]
+    assert hut.complete
+
+
+@pytest.mark.req("REQ-SIM-009")
+def test_completion_ends_builders_work_with_a_full_work_done_event(
+    econ: Registry, make_world: MakeWorld
+) -> None:
+    """AC2: each builder's work_done names the construction, the kind and the site."""
+    state = world(make_world)
+    with_hut(state).delivered = {"wood": 4}
+    state.buildings["b0"].work_done = 19.0
+    events = run(Engine(econ), state, [Construct("a", "b0")], 1)
+    assert of(events, "work_done") == [
+        {
+            "actor": "a",
+            "work": "construction",
+            "ident": "hut",
+            "target": "b0",
+            "created": {},
+            "destroyed": {},
+        }
+    ]
+
+
+@pytest.mark.req("REQ-SIM-009")
+def test_completion_leaves_other_activities_alone(econ: Registry, make_world: MakeWorld) -> None:
+    """AC2: only villagers constructing this very building are released."""
+    state = world(make_world)
+    with_hut(state).delivered = {"wood": 4}
+    state.buildings["b1"] = Building("b1", "wall", Coord(5, 1), PERSONAL_A, {"wood": 1})
+    state.buildings["b0"].work_done = 19.0
+    state.villagers["b"].pos = Coord(4, 1)
+    engine = Engine(econ)
+    engine.step(state, [Construct("b", "b1")])
+    events = engine.step(state, [Construct("a", "b0")])[1]
+    assert [d["actor"] for d in of(events, "work_done")] == ["a"]
+    other = state.villagers["b"].activity
+    assert other is not None
+    assert (other.kind, other.target) == ("construction", "b1")
+
+
+@pytest.mark.req("REQ-SIM-004")
+def test_the_cost_field_follows_new_walls(econ: Registry) -> None:
+    """AC3: the cached cost field is rebuilt when the set of blocked tiles changes."""
+    state = WorldState.new(1, TileMap(3, 1, ["grass"] * 3, [0.0] * 3))
+    engine = Engine(econ)
+    first = engine._cost_field(state)
+    assert engine._cost_field(state) is first
+    state.buildings["b0"] = Building("b0", "wall", Coord(1, 0), PERSONAL_A)
+    second = engine._cost_field(state)
+    assert second is not first
+    assert second.cost(Coord(1, 0)) is None
+    assert engine._cost_field(state) is second

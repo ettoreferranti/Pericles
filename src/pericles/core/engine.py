@@ -46,11 +46,8 @@ class Engine:
             Deposit: partial(construction.deposit, self.context),
             Take: partial(construction.take, self.context),
         }
-        self._field_key: tuple[TileMap, frozenset[Coord]] | None = (
+        self._cache: tuple[TileMap, frozenset[Coord], TerrainCostField] | None = (
             None  # pragma: no mutate - cache sentinel; any non-matching value just forces a rebuild
-        )
-        self._field: TerrainCostField | None = (
-            None  # pragma: no mutate - cache sentinel; any non-None value just forces a rebuild
         )
 
     def register(self, intent_type: type[Intent], handler: Handler) -> None:
@@ -105,11 +102,12 @@ class Engine:
     def _cost_field(self, state: WorldState) -> TerrainCostField:
         """Cached per tilemap object and blocked-tile set (ADR-0014 §7)."""
         blocked = construction.blocked_tiles(self.context, state)
-        key = self._field_key
-        if self._field is None or key is None or key[0] is not state.tilemap or key[1] != blocked:
-            self._field = TerrainCostField(state.tilemap, self.registry, blocked.__contains__)
-            self._field_key = (state.tilemap, blocked)
-        return self._field
+        cache = self._cache
+        if cache is not None and cache[0] is state.tilemap and cache[1] == blocked:
+            return cache[2]
+        field = TerrainCostField(state.tilemap, self.registry, blocked.__contains__)
+        self._cache = (state.tilemap, blocked, field)
+        return field
 
     def _move_to(self, state: WorldState, intent: Intent, sink: EventSink) -> None:
         assert isinstance(intent, MoveTo)

@@ -62,7 +62,12 @@ items:
     tags: [tool, axe]
     modifiers:
       - {target: {kind: action, id: chop}, attribute: work_speed, op: mul, value: 2.0}
-  - {id: hammer, weight: 1.0, durability: 2, tags: [tool, hammer]}
+  - id: hammer
+    weight: 1.0
+    durability: 2
+    tags: [tool, hammer]
+    modifiers:
+      - {target: {kind: building, id: hut}, attribute: work_speed, op: mul, value: 2.0}
 nodes:
   - {id: tree, yields: wood, terrains: [forest], density: 1.0, stock: 6, regrowth_per_day: 1.5}
   - {id: bush, yields: berries, terrains: [grass], density: 0.01, stock: 4}
