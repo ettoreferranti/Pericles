@@ -1,14 +1,19 @@
-"""The deterministic tick loop (REQ-SIM-002, ADR-0001, ADR-0013)."""
+"""The deterministic tick loop (REQ-SIM-002, ADR-0001, ADR-0013, ADR-0014)."""
 
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
+from functools import partial
 
+from pericles.core import work
+from pericles.core.config import EngineConfig
 from pericles.core.content.registry import Registry
+from pericles.core.context import Context
 from pericles.core.events import Event, EventSink
-from pericles.core.intents import Intent, MoveTo, Wait
+from pericles.core.intents import Intent, MoveTo, StartAction, Wait
 from pericles.core.mapgen import TileMap
 from pericles.core.modifiers import expire
+from pericles.core.nodes import regrow
 from pericles.core.pathfinding import TerrainCostField, find_path
 from pericles.core.state import WorldState
 
@@ -16,11 +21,14 @@ Handler = Callable[[WorldState, Intent, EventSink], None]
 
 
 class Engine:
-    def __init__(self, registry: Registry) -> None:
+    def __init__(self, registry: Registry, config: EngineConfig | None = None) -> None:
         self.registry = registry
+        self.config = config if config is not None else EngineConfig()
+        self.context = Context.build(registry, self.config)
         self._handlers: dict[type[Intent], Handler] = {
             MoveTo: self._move_to,
             Wait: self._wait,
+            StartAction: partial(work.start_action, self.context),
         }
         self._field_map: TileMap | None = (
             None  # pragma: no mutate - cache sentinel; any non-matching value just forces a rebuild
@@ -31,6 +39,12 @@ class Engine:
 
     def register(self, intent_type: type[Intent], handler: Handler) -> None:
         self._handlers[intent_type] = handler
+
+    def interrupt(
+        self, state: WorldState, villager_id: str, sink: EventSink, cause: str = "intervened"
+    ) -> None:
+        """Interrupt a villager's work on behalf of someone else (REQ-SIM-008 AC3)."""
+        work.interrupt(self.context, state.villagers[villager_id], sink, cause=cause)
 
     def step(self, state: WorldState, intents: Sequence[Intent]) -> tuple[WorldState, list[Event]]:
         sink = EventSink(state.tick)
@@ -49,11 +63,25 @@ class Engine:
                 sink.emit("intent_rejected", actor=intent.actor, intent=intent.kind, reason=reason)
                 continue
             acted.add(intent.actor)
+            work.interrupt(self.context, state.villagers[intent.actor], sink, cause="actor")
             self._handlers[type(intent)](state, intent, sink)
+        self._advance_work(state, sink)
         self._advance_movement(state, sink)
+        if (state.tick + 1) % self.config.calendar.ticks_per_day == 0:
+            regrow(state.nodes.values(), self.registry)
         state.modifiers = expire(state.modifiers, state.tick + 1)
         state.tick += 1
         return state, sink.events
+
+    def _advance_work(self, state: WorldState, sink: EventSink) -> None:
+        for vid in sorted(state.villagers):
+            villager = state.villagers[vid]
+            activity = villager.activity
+            if activity is None:
+                continue
+            activity.done += activity.speed
+            if activity.done >= activity.work - work.EPSILON:
+                work.complete(self.context, state, villager, sink)
 
     def _cost_field(self, state: WorldState) -> TerrainCostField:
         if self._field is None or self._field_map is not state.tilemap:

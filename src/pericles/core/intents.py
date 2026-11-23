@@ -27,3 +27,10 @@ class MoveTo(Intent):
 @dataclass(frozen=True)
 class Wait(Intent):
     kind: ClassVar[str] = "wait"
+
+
+@dataclass(frozen=True)
+class StartAction(Intent):
+    action: str
+    target: str | None = None
+    kind: ClassVar[str] = "start_action"
