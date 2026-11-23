@@ -233,19 +233,19 @@ def finish(
     *,
     created: Mapping[str, int],
     skill: str | None,
-    tool_kind: str,
-    tool_ident: str,
-    tags: Iterable[str],
-    required: Iterable[str],
+    tools: list[Tool],
 ) -> None:
-    """Consume the reserved inputs, train the skill, wear the tools and report the result."""
+    """Consume the reserved inputs, train the skill, wear the given tools and report.
+
+    `tools` are the instances used, chosen before the outputs were added, so a tool the work
+    itself produced is never worn by it.
+    """
     config = ctx.config
     destroyed = dict(sorted(activity.reserved.totals().items()))
     if skill is not None:
         villager.skills[skill] = min(
             config.max_skill, villager.skills.get(skill, 0.0) + config.skill_practice
         )
-    tools = used_tools(ctx, villager, tool_kind, tool_ident, tags, required) or []
     villager.activity = None
     sink.emit(
         "work_done",
@@ -275,6 +275,8 @@ def _finish_action(
         if node.stock == 0:
             interrupt(ctx, villager, sink, cause="engine", reason="depleted")
             return
+    tools = used_tools(ctx, villager, "action", action.id, action.tags, action.requires.tools)
+    assert tools is not None  # a working villager's inventory cannot have lost a required tool
     yields = None if node is None else registry.nodes[node.kind].yields
     created: dict[str, int] = {}
     for item in sorted(action.outputs, key=lambda name: (name != yields, name)):
@@ -294,10 +296,7 @@ def _finish_action(
         sink,
         created=created,
         skill=action.skill,
-        tool_kind="action",
-        tool_ident=action.id,
-        tags=action.tags,
-        required=action.requires.tools,
+        tools=tools,
     )
 
 

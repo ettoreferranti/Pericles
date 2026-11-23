@@ -420,7 +420,14 @@ items:
     tags: [tool]
     modifiers:
       - {target: {kind: action, tag: labour}, attribute: work_speed, op: add, value: 1.0}
+  - id: spike
+    weight: 0.5
+    durability: 1
+    tags: [tool]
+    modifiers:
+      - {target: {kind: action, id: forge}, attribute: work_speed, op: mul, value: 2.0}
 actions:
+  - {id: forge, duration_ticks: 2, outputs: {spike: 1}}
   - id: practise
     duration_ticks: 4
     outputs: {plank: 1}
@@ -450,11 +457,11 @@ def test_used_tools_include_each_item_once_and_match_by_tag(extra: Registry) -> 
     assert used_tools(ctx, state_villager, "action", "whittle", ("craft",), []) == []
 
 
-@pytest.mark.req("REQ-SIM-014")
-def test_any_skill_level_above_the_minimum_starts_the_action(
+@pytest.mark.req("REQ-SIM-008")
+def test_an_untrained_villager_is_below_a_fractional_minimum_skill(
     extra: Registry, make_world: MakeWorld
 ) -> None:
-    """AC1: an untrained villager (level 0) is below a fractional minimum skill."""
+    """AC2: an untrained villager (level 0) is rejected by a fractional minimum skill."""
     state = world(make_world)
     events = Engine(extra).step(state, [StartAction("a", "practise")])[1]
     assert of(events, "intent_rejected")[0]["reason"] == "skill_too_low"
@@ -575,10 +582,22 @@ def test_context_locks_what_a_technology_unlocks(econ: Registry, make_world: Mak
     assert knows(state, villager, "vault") and not knows(state, villager, "saw")
 
 
-def test_reject_names_the_intent_kind(make_world: MakeWorld) -> None:
+def test_reject_names_the_intent_kind() -> None:
     """Rejections report the actor, the intent kind and the reason."""
     sink = EventSink(0)
     reject(sink, StartAction("a", "x"), "why")
     assert of(sink.events, "intent_rejected") == [
         {"actor": "a", "intent": "start_action", "reason": "why"}
     ]
+
+
+@pytest.mark.req("REQ-SIM-010")
+def test_a_tool_the_action_produces_is_not_worn_by_it(
+    extra: Registry, make_world: MakeWorld
+) -> None:
+    """AC2: wear applies to tools used by the work, not to a tool it has just created."""
+    state = world(make_world)
+    events = run(Engine(extra), state, [StartAction("a", "forge")], 2)
+    assert of(events, "work_done")[0]["created"] == {"spike": 1}
+    assert of(events, "tool_broken") == []
+    assert state.villagers["a"].inventory.tools == [Tool("spike", 1)]
