@@ -36,7 +36,7 @@ from pericles.core.invariants import (
     item_totals,
     ledger,
 )
-from pericles.core.inventory import EPSILON, Inventory
+from pericles.core.inventory import EPSILON, Inventory, Tool
 from pericles.core.nodes import Node
 from pericles.core.state import Activity, Villager, WorldState
 
@@ -192,54 +192,131 @@ def test_debug_mode_stops_a_tick_that_breaks_conservation(
 
 # --- random play ---------------------------------------------------------------------------
 
-ACTORS = st.sampled_from(["a", "b", "c", "z"])
-BUILDINGS = st.sampled_from(["b0", "b1", "b2", "w0", "s0", "h0", "x"])
-ITEMS = st.sampled_from(["wood", "berries", "plank", "seed", "hammer", "axe", "x"])
-COORDS = st.builds(Coord, st.integers(-1, 6), st.integers(-1, 4))
-QTY = st.integers(-1, 6)
-INTENTS = st.one_of(
-    st.builds(
-        StartAction,
-        ACTORS,
-        st.sampled_from(["chop", "pick", "whittle", "log", "nail", "sow", "tinker", "x"]),
-        st.sampled_from([None, "n0", "n1", "w0", "x"]),
-    ),
-    st.builds(MoveTo, ACTORS, COORDS),
-    st.builds(Wait, ACTORS),
-    st.builds(
-        PlaceBuilding,
-        ACTORS,
-        st.sampled_from(["hut", "wall", "workshop", "vault", "x"]),
-        COORDS,
-        st.sampled_from(["personal", "shared", "communal"]),
-        st.sampled_from([(), ("b",), ("c",)]),
-    ),
-    st.builds(Deliver, ACTORS, BUILDINGS, ITEMS, QTY),
-    st.builds(Construct, ACTORS, BUILDINGS),
-    st.builds(Deposit, ACTORS, BUILDINGS, ITEMS, QTY),
-    st.builds(Take, ACTORS, BUILDINGS, ITEMS, QTY),
-    st.builds(Craft, ACTORS, st.sampled_from(["saw", "press", "make_axe", "x"]), BUILDINGS),
-    st.builds(Research, ACTORS, st.sampled_from(["lore", "commons", "x"]), BUILDINGS),
+REAL = ["a", "b", "c"]
+HOTSPOTS = [Coord(1, 0), Coord(2, 1), Coord(3, 0), Coord(0, 1), Coord(4, 1), Coord(2, 3)]
+SITES = ["b0", "b1", "w0", "s0", "h0"]
+ITEMS = st.sampled_from(["wood", "berries", "plank", "seed", "hammer", "axe"])
+QTY = st.integers(0, 5)
+ACTIONS = st.sampled_from(
+    [
+        ("chop", "n0"),
+        ("chop", "n0"),
+        ("pick", "n1"),
+        ("whittle", None),
+        ("log", "n0"),
+        ("nail", None),
+        ("sow", None),
+        ("tinker", "w0"),
+        ("secret_art", None),
+        ("pick", "n0"),
+    ]
 )
+
+
+def intents_for(actor: str) -> st.SearchStrategy[Intent]:
+    return st.one_of(
+        ACTIONS.map(lambda pair: StartAction(actor, pair[0], pair[1])),
+        st.builds(MoveTo, st.just(actor), st.sampled_from(HOTSPOTS)),
+        st.builds(Wait, st.just(actor)),
+        st.builds(
+            PlaceBuilding,
+            st.just(actor),
+            st.sampled_from(["hut", "wall", "workshop", "vault"]),
+            st.builds(Coord, st.integers(0, 5), st.integers(0, 3)),
+            st.sampled_from(["personal", "shared", "communal"]),
+            st.sampled_from([(), ("b",), ("c",)]),
+        ),
+        st.builds(Deliver, st.just(actor), st.sampled_from(SITES), ITEMS, QTY),
+        st.builds(Construct, st.just(actor), st.sampled_from(SITES)),
+        st.builds(Deposit, st.just(actor), st.sampled_from(SITES), ITEMS, QTY),
+        st.builds(Take, st.just(actor), st.sampled_from(SITES), ITEMS, QTY),
+        st.builds(Take, st.just(actor), st.just("h0"), st.just("wood"), st.integers(1, 5)),
+        st.builds(Take, st.just(actor), st.just("h0"), st.just("wood"), st.integers(1, 5)),
+        st.builds(Take, st.just(actor), st.just("h0"), st.just("wood"), st.integers(1, 5)),
+        st.builds(Deposit, st.just(actor), st.just("h0"), ITEMS, st.integers(1, 3)),
+        st.builds(
+            Craft, st.just(actor), st.sampled_from(["saw", "press", "make_axe"]), st.just("w0")
+        ),
+        st.builds(Research, st.just(actor), st.sampled_from(["lore", "commons"]), st.just("s0")),
+    )
+
+
+NONE: st.SearchStrategy[Intent | None] = st.none()
+BUSY_TICK = st.tuples(
+    *[st.one_of(NONE, NONE, intents_for(actor)) for actor in REAL],
+    st.one_of(NONE, NONE, NONE, intents_for("z")),  # an occasional unknown actor
+).map(lambda picks: [intent for intent in picks if intent is not None])
+# Work only completes on ticks nobody interrupts it, so most ticks are idle.
+TICKS = st.one_of(st.just([]), st.just([]), st.just([]), st.just([]), BUSY_TICK)
+PLAYS = st.tuples(st.booleans(), st.lists(TICKS, min_size=1, max_size=60))
+
+# place, deliver the whole cost, then construct: randomised play continues from there
+PREFIX: dict[int, list[Intent]] = {
+    0: [PlaceBuilding("c", "hut", Coord(3, 3))],
+    2: [Deliver("c", "b0", "wood", 4)],
+    3: [Construct("c", "b0")],
+}
+
+
+def rich_village(make_world: MakeWorld, econ: Registry, *, build: bool) -> WorldState:
+    """The village with stock for every recipe, and tools that break after a use or two."""
+    state = village(make_world, econ)
+    for villager in state.villagers.values():
+        villager.inventory.add(econ, "wood", 4)
+        villager.inventory.add(econ, "plank", 2)
+        villager.inventory.add(econ, "berries", 2)
+    state.villagers["a"].inventory.tools[0].durability = 1
+    state.villagers["c"].inventory.tools.append(Tool("hammer", 1))
+    state.villagers["b"].inventory.tools[0].durability = 1
+    if build:
+        state.villagers["c"].pos = Coord(2, 3)
+    return state
+
+
+def play(
+    econ: Registry, make_world: MakeWorld, scenario: tuple[bool, list[list[Intent]]]
+) -> Counter[str]:
+    """Run one random play in debug mode and count the events it produced."""
+    build, ticks = scenario
+    engine = Engine(econ, EngineConfig(debug_invariants=True))
+    state = rich_village(make_world, econ, build=build)
+    seen: Counter[str] = Counter()
+    schedule = ([PREFIX.get(i, []) for i in range(4)] if build else []) + ticks
+    for intents in schedule:
+        seen.update(event.kind for event in engine.step(state, intents)[1])
+    for _ in range(30):  # let unfinished work complete
+        seen.update(event.kind for event in engine.step(state, [])[1])
+    assert check_state(engine.context, state) == []
+    return seen
 
 
 @pytest.mark.req("REQ-SIM-018")
 @pytest.mark.req("REQ-SIM-013")
 @settings(
-    max_examples=60, deadline=None, suppress_health_check=[HealthCheck.function_scoped_fixture]
+    max_examples=200, deadline=None, suppress_health_check=[HealthCheck.function_scoped_fixture]
 )
-@given(st.lists(st.lists(INTENTS, max_size=4), min_size=1, max_size=40))
+@given(PLAYS)
 def test_random_play_keeps_every_invariant(
-    econ: Registry, make_world: MakeWorld, ticks: list[list[Intent]]
+    econ: Registry, make_world: MakeWorld, scenario: tuple[bool, list[list[Intent]]]
 ) -> None:
     """AC2 (property): random play in debug mode conserves items and never breaks a state rule."""
-    engine = Engine(econ, EngineConfig(debug_invariants=True))
-    state = village(make_world, econ)
-    for intents in ticks:
-        engine.step(state, intents)
-    for _ in range(30):  # let unfinished work complete
-        engine.step(state, [])
-    assert check_state(engine.context, state) == []
+    play(econ, make_world, scenario)
+
+
+@pytest.mark.req("REQ-SIM-018")
+def test_random_play_reaches_the_economy(econ: Registry, make_world: MakeWorld) -> None:
+    """AC2: a fixed-seed run of the same generator completes work, builds, crafts and researches."""
+    seen: Counter[str] = Counter()
+
+    @settings(derandomize=True, max_examples=60, deadline=None, database=None)
+    @given(PLAYS)
+    def run(scenario: tuple[bool, list[list[Intent]]]) -> None:
+        seen.update(play(econ, make_world, scenario))
+
+    run()
+    for kind in ("work_done", "building_completed", "tool_broken", "item_taken"):
+        assert seen[kind] > 0, (kind, seen)
+    assert seen["technology_learned"] > 0, seen
 
 
 def scripted(tick: int) -> list[Intent]:
