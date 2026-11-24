@@ -308,26 +308,63 @@ class View:
         housing = self.ctx.registry.buildings[building.kind].housing
         return occupants(self.state, building.id) >= housing
 
+    def _pair_rank(self, a: Villager, b: Villager) -> Callable[[Building], tuple[int, str]]:
+        """The same order for both partners: summed distance, then id."""
+        return lambda h: (a.pos.manhattan(h.origin) + b.pos.manhattan(h.origin), h.id)
+
+    def _fits_pair(self, building: Building, a: Villager, b: Villager) -> bool:
+        """A complete house either partner may live in, with beds for both and one to spare,
+        not counting the partners' own beds in it."""
+        housing = self.ctx.registry.buildings[building.kind].housing
+        allowed = building.ownership.owned_by(a.id) or building.ownership.owned_by(b.id)
+        others = occupants(self.state, building.id) - sum(
+            1 for v in (a, b) if v.home == building.id
+        )
+        room = others + beds_needed(a) + beds_needed(b) + 1 <= housing
+        return building.complete and allowed and room
+
     def family_house(self, villager: Villager) -> Building | None:
-        """For a couple sharing a full house: the nearest other complete house (ties to the
-        lower id) either partner may live in, with beds for both and one to spare."""
-        registry = self.ctx.registry
+        """For a couple without a roomy shared home: the other complete house nearest to both
+        partners (summed distance, ties to the lower id) with beds for both and one to spare."""
         partner = self.state.villagers.get(villager.partner) if villager.partner else None
         if partner is None:
             return None
-        wanted = beds_needed(villager) + beds_needed(partner) + 1
-
-        def fits(b: Building) -> bool:
-            housing = registry.buildings[b.kind].housing
-            allowed = b.ownership.owned_by(villager.id) or b.ownership.owned_by(partner.id)
-            room = occupants(self.state, b.id) + wanted <= housing
-            return b.complete and b.id != villager.home and allowed and room
-
+        homes = {villager.home, partner.home}
         options = sorted(
-            (b for b in self.state.buildings.values() if fits(b)),
-            key=lambda b: (villager.pos.manhattan(b.origin), b.id),
+            (
+                b
+                for b in self.state.buildings.values()
+                if b.id not in homes and self._fits_pair(b, villager, partner)
+            ),
+            key=self._pair_rank(villager, partner),
         )
         return options[0] if options else None
+
+    def couple_house(self, villager: Villager) -> Building | None:
+        """Where a housed couple should live; both partners compute the same house.
+
+        Together in a home with a free bed: that home. Together in a full home: the family
+        house, if any. Apart: whichever partner's home fits the pair (summed distance, then
+        id), else the family house. None while the partner has no home or nothing fits.
+        """
+        partner = self.state.villagers.get(villager.partner) if villager.partner else None
+        if partner is None or partner.home is None:
+            return None
+        home = self.home(villager)
+        if villager.home == partner.home:
+            if home is None or not self.full(home):
+                return home
+            return self.family_house(villager) or home
+        buildings = self.state.buildings
+        pair_homes = sorted(
+            (
+                buildings[h]
+                for h in {villager.home, partner.home}
+                if h in buildings and self._fits_pair(buildings[h], villager, partner)
+            ),
+            key=self._pair_rank(villager, partner),
+        )
+        return pair_homes[0] if pair_homes else self.family_house(villager)
 
     def _communal(self, attribute: str, *, complete: bool) -> int:
         registry = self.ctx.registry

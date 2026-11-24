@@ -294,14 +294,14 @@ def build(view: View, villager: Villager) -> Decision | None:
 
 
 def home(view: View, villager: Villager) -> Decision | None:
-    current = view.home(villager)
-    partner = view.state.villagers.get(villager.partner) if villager.partner is not None else None
-    apart = partner is not None and partner.home is not None and partner.home != villager.home
-    if current is not None and not apart:
-        if partner is None or not view.full(current):
+    """Homeless villagers take a house with room; a housed couple moves to its couple house."""
+    if view.home(villager) is not None:
+        if villager.partner is None:
             return None
-        house = view.family_house(villager)  # together, but no bed for a child: move together
-        return None if house is None else Decision(SetHome(villager.id, house.id), target=house.id)
+        house = view.couple_house(villager)
+        if house is None or house.id == villager.home:
+            return None
+        return Decision(SetHome(villager.id, house.id), target=house.id)
     house = view.house_for(villager)
     if house is None or house.id == villager.home:
         return None

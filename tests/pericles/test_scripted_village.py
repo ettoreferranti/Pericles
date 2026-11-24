@@ -106,8 +106,9 @@ def test_homes_go_to_the_homeless_and_reunite_partners(
     registry: Registry, make_world: MakeWorld
 ) -> None:
     """AC1: homeless villagers move in; partners living apart move together."""
-    a = Villager("a", "A", Coord(0, 0), sex="female", partner="b")
-    b = Villager("b", "B", Coord(0, 0), sex="male", partner="a", home="h1")
+    # both stand by h1, so the pair's choice (summed distance) is h1 once a has a home too
+    a = Villager("a", "A", Coord(9, 8), sex="female", partner="b")
+    b = Villager("b", "B", Coord(9, 8), sex="male", partner="a", home="h1")
     c = Villager("c", "C", Coord(0, 0), home="h0")
     state = make_world(ROWS, [a, b, c])
     house(state, "h0", Coord(1, 1))
@@ -503,3 +504,92 @@ def test_a_crowded_couple_may_move_into_either_partners_house_only(
         assert house_ is not None and house_.id == "p", owner
     del state.buildings["p"]
     assert view_of(registry, state, storage_per_capita=0.0).family_house(a) is None
+
+
+def full_shared_house(
+    registry: Registry, make_world: MakeWorld, a_at: Coord, b_at: Coord
+) -> tuple[WorldState, Villager, Villager]:
+    """A couple apart in space but sharing h0, full; empty h5 and h9 equally far in sum."""
+    capacity = registry.buildings["house"].housing
+    a = Villager("a", "A", a_at, sex="female", partner="b", home="h0")
+    b = Villager("b", "B", b_at, sex="male", partner="a", home="h0")
+    state = make_world(ROWS, [a, b])
+    for hid, at in (("h0", Coord(6, 6)), ("h5", Coord(12, 0)), ("h9", Coord(0, 12))):
+        house(state, hid, at)
+    for i in range(capacity - 2):
+        state.villagers[f"o{i}"] = Villager(f"o{i}", "O", Coord(6, 9), home="h0")
+    return state, a, b
+
+
+def test_partners_standing_apart_choose_the_same_family_house(
+    registry: Registry, make_world: MakeWorld
+) -> None:
+    """AC1: the couple's choice ranks by both partners' distances, so each picks the same house
+    though each stands nearer a different one (h9 near a, h5 near b; equal sums, h5 by id)."""
+    state, a, b = full_shared_house(registry, make_world, Coord(0, 15), Coord(15, 0))
+    view = view_of(registry, state, storage_per_capita=0.0)
+    for villager in (a, b):
+        decision = rules.home(view, villager)
+        assert decision is not None and decision.intent == SetHome(villager.id, "h5")
+
+
+def test_a_move_in_flight_ends_with_the_partner_joining(
+    registry: Registry, make_world: MakeWorld
+) -> None:
+    """AC1: after one partner moved to the family house, it stays; the other follows it,
+    though the old house now has room for one."""
+    state, a, b = full_shared_house(registry, make_world, Coord(0, 15), Coord(15, 0))
+    a.home = "h5"
+    view = view_of(registry, state, storage_per_capita=0.0)
+    assert rules.home(view, a) is None
+    decision = rules.home(view, b)
+    assert decision is not None and decision.intent == SetHome("b", "h5")
+
+
+def test_a_couple_apart_reunites_in_the_home_chosen_for_both(
+    registry: Registry, make_world: MakeWorld
+) -> None:
+    """AC1: partners living apart move into whichever of their homes has room for both plus
+    one, ranked by both distances then id; the one already there stays."""
+    state, a, b = full_shared_house(registry, make_world, Coord(0, 15), Coord(15, 0))
+    for vid in [v for v in state.villagers if v.startswith("o")]:
+        del state.villagers[vid]
+    a.home, b.home = "h9", "h5"  # both empty: equal sums, h5 by id
+    view = view_of(registry, state, storage_per_capita=0.0)
+    assert rules.home(view, b) is None
+    decision = rules.home(view, a)
+    assert decision is not None and decision.intent == SetHome("a", "h5")
+    capacity = registry.buildings["house"].housing
+    for i in range(capacity - 2):  # h5 now has room for the two, but not a third
+        state.villagers[f"q{i}"] = Villager(f"q{i}", "Q", Coord(0, 0), home="h5")
+    view = view_of(registry, state, storage_per_capita=0.0)
+    assert rules.home(view, a) is None
+    decision = rules.home(view, b)
+    assert decision is not None and decision.intent == SetHome("b", "h9")
+    assert decision.target == "h9"
+
+
+def test_a_crowded_couple_settles_in_one_house_through_the_engine(
+    registry: Registry, make_world: MakeWorld
+) -> None:
+    """AC1: run by the controller and engine, partners standing apart end in one house, and
+    no villager is sent a SetHome after that."""
+    state, _, _ = full_shared_house(registry, make_world, Coord(0, 15), Coord(15, 0))
+    engine = Engine(registry, default_config(debug_invariants=True))
+    ctl = Controller(
+        engine.context, AgentConfig(storage_per_capita=0.0), ScriptedMind(), ScriptedMind()
+    )
+    settled_at: int | None = None
+    late_moves = []
+    for _ in range(120):
+        intents = ctl.intents(state)
+        if settled_at is not None:
+            late_moves += [i for i in intents if isinstance(i, SetHome)]
+        state, events = engine.step(state, intents)
+        ctl.observe(state, events)
+        homes = {state.villagers["a"].home, state.villagers["b"].home}
+        if settled_at is None and len(homes) == 1 and homes != {"h0"}:
+            settled_at = state.tick
+    assert settled_at is not None
+    assert state.villagers["a"].home == state.villagers["b"].home == "h5"
+    assert late_moves == []

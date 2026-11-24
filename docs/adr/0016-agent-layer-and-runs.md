@@ -39,7 +39,11 @@ M1d closes milestone M1: villages that run on their own (REQ-AGT-008, REQ-SIM-01
    - At most one villager claims each placement, recorded as target `place:<kind>`.
    - Sites are supplied by whoever carries what they need. Up to `max_builders` villagers build each site once its materials are in.
    - **Couples.** Unpartnered adults of a compatible sex (exactly one of the pair has `bearing_sex`) propose to the nearest free candidate and accept proposals made to them.
-   - **Homes.** Homeless villagers, and partners living apart, move into a house with room, preferring the partner's. A couple that shares a house with no spare bed moves together into the nearest other house with beds for both and one to spare (ties to the lower id). One partner moves first, and the other then follows as a partner living apart.
+   - **Homes.** Homeless villagers move into a house with room, preferring the partner's. A housed couple's house is chosen for the pair, so both partners compute the same one:
+     - Together, in a home with a free bed: stay.
+     - Together, in a full home: move to the *family house*. That is the other complete house either partner may live in, with beds for both and one to spare, ranked by the partners' summed distance and then by id. If there is none, stay.
+     - Apart: move to whichever partner's home has room for both plus one (same ranking). If neither has, move to the family house.
+     - A partner already at the chosen house stays, and the other moves in.
 5. **Experiment file.**
    - `experiment.yaml` has the sections `seed`, `packs`, `map`, `population`, `run`, `engine` and `agents`.
    - `engine` and `agents` override the packaged `default_settings.yaml` key by key. A given `calendar` replaces the default calendar whole.
