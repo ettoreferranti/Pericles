@@ -258,7 +258,7 @@ def test_redundancy_matches_the_whole_intent(registry: Registry, make_world: Mak
 
 @pytest.mark.req("REQ-AGT-008")
 def test_every_mind_gets_a_real_view(registry: Registry, make_world: MakeWorld) -> None:
-    """AC1: all minds see this controller's config and memory; the node index is cached per node set."""
+    """AC1: every mind sees this controller's config and memory; the node index is cached."""
     seen: list[View] = []
 
     class Spy:
