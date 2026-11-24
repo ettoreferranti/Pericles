@@ -15,6 +15,7 @@ from pericles.core.nodes import Node
 from pericles.core.state import Villager, WorldState
 
 FAILURES = ("intent_rejected", "move_failed")
+INTERRUPTED, ENGINE_CAUSE = "work_interrupted", "engine"
 ACTION, CONSTRUCTION = "action", "construction"
 
 
@@ -24,6 +25,17 @@ class MindFailure(Exception):
 
 class Mind(Protocol):
     def decide(self, view: View, villager: Villager) -> Decision | None: ...
+
+
+def _failed(event: Event) -> bool:
+    """True if `event` says the villager's current plan did not work out.
+
+    Work the engine itself stops (depleted node, full carry, known technology) is a failure;
+    work the villager or an intervention stops is not.
+    """
+    if event.kind == INTERRUPTED:
+        return event.data.get("cause") == ENGINE_CAUSE
+    return event.kind in FAILURES
 
 
 def _redundant(villager: Villager, intent: Intent) -> bool:
@@ -112,7 +124,7 @@ class Controller:
     def observe(self, state: WorldState, events: Sequence[Event]) -> None:
         """Learn from the tick's failures: avoid failed targets, idle on untargeted failures."""
         for event in events:
-            if event.kind not in FAILURES:
+            if not _failed(event):
                 continue
             memory = self.memory.get(str(event.data.get("actor")))
             if memory is None:

@@ -17,7 +17,7 @@ M1d closes milestone M1: villages that run on their own (REQ-AGT-008, REQ-SIM-01
    - An adult uses the mind registered for its `model`. With no mind registered, or `model` unset, it uses the scripted mind.
    - A mind that raises `MindFailure` falls back to the scripted mind, and the controller counts the fallback (REQ-AGT-008 AC2). The M2 LLM mind plugs in here.
 2. **Due villagers and memory.**
-   - The controller asks for a decision only for a *due* villager: one with no activity, no path and no idle time left, or one whose need level reaches its `urgent_at` level.
+   - The controller asks for a decision only for a *due* villager: one with no activity, no path and no idle time left. A need level at its `urgent_at` level makes a villager due even while it has an activity or a path, but never inside its idle window. `idle_ticks` is short, and the rule stops an urgent villager from re-sending a rejected untargeted intent every tick.
    - The controller never sends an intent that repeats what the villager is already doing. Examples are a `MoveTo` to the end of its current path, or a `StartAction` for its current action and target. Such an intent would restart the work.
    - Per villager it remembers:
      - `target` and `job` of the last decision.

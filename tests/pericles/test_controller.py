@@ -326,8 +326,6 @@ def test_an_idle_window_beats_urgency(registry: Registry, make_world: MakeWorld)
     ctl = controller(registry, mind)
     ctl.intents(state)
     ctl.observe(state, [Event(0, 0, "intent_rejected", {"actor": "a", "reason": "x"})])
-    ctl.memory["a"].target = None
-    ctl.observe(state, [Event(0, 0, "intent_rejected", {"actor": "a", "reason": "x"})])
     until = ctl.memory["a"].idle_until
     assert until == state.tick + config.idle_ticks
     state.tick = until - 1
@@ -359,3 +357,26 @@ def test_one_villager_with_no_decision_does_not_stop_the_rest(
     state = make_world(ROWS, [Villager("a", "A", Coord(0, 0)), Villager("b", "B", Coord(0, 0))])
     mind = Script(lambda v: None if v.id == "a" else walk(v))
     assert controller(registry, mind).intents(state) == [MoveTo("b", GOAL)]
+
+
+def interrupted(actor: str, cause: str) -> Event:
+    data = {"actor": actor, "work": "action", "ident": "x", "target": "n1", "cause": cause}
+    return Event(0, 0, "work_interrupted", {**data, "reason": "depleted"})
+
+
+@pytest.mark.req("REQ-AGT-008")
+def test_work_the_engine_stops_is_a_failure(registry: Registry, make_world: MakeWorld) -> None:
+    """AC1: engine-stopped work avoids its target, or idles without one; other stops are ignored."""
+    config = AgentConfig()
+    state = make_world(ROWS, [Villager("a", "A", Coord(0, 0)), Villager("b", "B", Coord(0, 0))])
+    ctl = controller(
+        registry,
+        Script(lambda v: Decision(MoveTo(v.id, GOAL), target="n7" if v.id == "a" else None)),
+    )
+    ctl.intents(state)
+    state.tick = 3
+    ctl.observe(state, [interrupted("a", "actor"), interrupted("b", "intervened")])
+    assert ctl.memory["a"].avoid == {} and ctl.memory["b"].idle_until == 0
+    ctl.observe(state, [interrupted("a", "engine"), interrupted("b", "engine")])
+    assert ctl.memory["a"].avoid == {"n7": 3 + config.avoid_ticks}
+    assert ctl.memory["b"].idle_until == 3 + config.idle_ticks
