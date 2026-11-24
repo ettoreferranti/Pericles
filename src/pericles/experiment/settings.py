@@ -27,6 +27,9 @@ class SettingsError(ValueError):
 def as_mapping(data: object, where: str) -> Mapping[str, Any]:
     if not isinstance(data, Mapping):
         raise SettingsError(f"{where}: expected a mapping")
+    for key in data:
+        if not isinstance(key, str):
+            raise SettingsError(f"{where}: setting names must be strings, got {key!r}")
     return data
 
 
@@ -34,6 +37,7 @@ def values_for(
     cls: type[Any], data: Mapping[str, Any], where: str, nested: set[str]
 ) -> dict[str, Any]:
     """Validate the scalar fields of a dataclass; `nested` fields are left to the caller."""
+    as_mapping(data, where)
     hints = typing.get_type_hints(cls)
     fields = {f.name: f for f in dataclasses.fields(cls)}
     for key in sorted(data):
@@ -110,6 +114,7 @@ def _read(path: Path) -> dict[str, Any]:
         raw = read_yaml(path)
     except ContentError as error:
         raise SettingsError(str(error)) from None
+    as_mapping(raw, "settings")
     for key in sorted(raw):
         if key not in SECTIONS:
             raise SettingsError(f"{key}: unknown section")

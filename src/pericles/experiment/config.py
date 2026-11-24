@@ -75,6 +75,8 @@ def _path(loc: Sequence[int | str]) -> str:
 
 
 def _pydantic(model: type[_Spec], data: object, where: str) -> Any:
+    if not isinstance(data, Mapping):
+        raise ExperimentError(f"{where}: expected a mapping")
     try:
         return model.model_validate(data)
     except ValidationError as error:
@@ -147,7 +149,10 @@ def _population(data: object, registry: Registry, engine: EngineConfig) -> tuple
     skills = _skills(registry)
     known = registry.all_ids()
     specs: list[VillagerSpec] = []
-    for i, entry in enumerate(_list(data, "population")):
+    entries = _list(data, "population")
+    if not entries:
+        raise ExperimentError("population: expected at least one villager")
+    for i, entry in enumerate(entries):
         where = f"population[{i}]"
         spec: VillagerSpec = _pydantic(VillagerSpec, entry, where)
         if any(s.id == spec.id for s in specs):
@@ -181,6 +186,9 @@ def _population(data: object, registry: Registry, engine: EngineConfig) -> tuple
 def experiment_from_mapping(raw: object, base_dir: Path) -> Experiment:
     if not isinstance(raw, Mapping):
         raise ExperimentError("experiment: expected a mapping")
+    for key in raw:
+        if not isinstance(key, str):
+            raise ExperimentError(f"experiment: setting names must be strings, got {key!r}")
     for key in sorted(raw):
         if key not in SECTIONS:
             raise ExperimentError(f"{key}: unknown section")

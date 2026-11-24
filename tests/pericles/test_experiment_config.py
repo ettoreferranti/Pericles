@@ -55,6 +55,11 @@ def changed(path: str, value: object) -> dict[str, Any]:
     return data
 
 
+def with_key(key: object) -> dict[Any, Any]:
+    """MINIMAL plus an extra top-level entry under a non-string key."""
+    return {**MINIMAL, key: 2}
+
+
 def test_the_baseline_experiment_loads() -> None:
     """AC1: seed, map, packs, population, engine and agent parameters come from the file."""
     experiment = load_experiment(BASELINE)
@@ -152,6 +157,27 @@ def test_the_resolved_config_rebuilds_the_same_experiment(tmp_path: Path) -> Non
             "agents.house_building: 'storehouse' has no housing",
         ),
         ([1, 2], "experiment: expected a mapping"),
+        (with_key(1), "experiment: setting names must be strings, got 1"),
+        (with_key(None), "experiment: setting names must be strings, got None"),
+        ({**MINIMAL, "engine": {1: 1}}, "engine: setting names must be strings, got 1"),
+        ({**MINIMAL, "agents": {2: 1}}, "agents: setting names must be strings, got 2"),
+        (changed("map", {1: 1}), "map: setting names must be strings, got 1"),
+        (
+            changed("map.bands.0", {1: 1}),
+            "map.bands[0]: setting names must be strings, got 1",
+        ),
+        (changed("map", [1]), "map: expected a mapping"),
+        (changed("run", [1]), "run: expected a mapping"),
+        ({**MINIMAL, "engine": [1]}, "engine: expected a mapping"),
+        ({**MINIMAL, "agents": 3}, "agents: expected a mapping"),
+        (changed("population.0", "ada"), "population[0]: expected a mapping"),
+        (changed("population", []), "population: expected at least one villager"),
+        ({**MINIMAL, "packs": [3]}, "packs: expected a non-empty list"),
+        (
+            changed("population.0.inventory", {"berries": "3"}),
+            "population[0].inventory.berries:",
+        ),
+        (changed("map.bands", "grass"), "map.bands: expected a list"),
     ],
 )
 def test_errors_name_the_field(tmp_path: Path, data: object, prefix: str) -> None:
@@ -159,6 +185,12 @@ def test_errors_name_the_field(tmp_path: Path, data: object, prefix: str) -> Non
     with pytest.raises(ExperimentError) as caught:
         experiment_from_mapping(data, tmp_path)
     assert str(caught.value).startswith(prefix), str(caught.value)
+
+
+def test_null_packs_means_the_base_pack(tmp_path: Path) -> None:
+    """AC1: an explicit `packs: null` is the same as leaving it out."""
+    experiment = experiment_from_mapping({**copy.deepcopy(MINIMAL), "packs": None}, tmp_path)
+    assert experiment.packs == (base_pack_path(),)
 
 
 def test_load_reports_bad_yaml(tmp_path: Path) -> None:
