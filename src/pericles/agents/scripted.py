@@ -11,7 +11,14 @@ from pericles.core.state import Villager
 class ScriptedMind:
     """Keeps an adult alive and productive; the baseline and the LLM fallback."""
 
-    rules: tuple[Rule, ...] = (rules.eat, rules.sleep, rules.shelter)
+    rules: tuple[Rule, ...] = (
+        rules.eat,
+        rules.sleep,
+        rules.shelter,
+        rules.deliver,
+        rules.deposit,
+        rules.work,
+    )
 
     def decide(self, view: View, villager: Villager) -> Decision:
         for rule in self.rules:

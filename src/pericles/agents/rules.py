@@ -6,9 +6,10 @@ import math
 from collections.abc import Callable, Iterable, Sequence
 
 from pericles.agents.view import Decision, View
+from pericles.core.buildings import remaining_cost
 from pericles.core.content.schema import ActionDef
 from pericles.core.geometry import Coord
-from pericles.core.intents import Eat, Sleep, StartAction, Take, Wait
+from pericles.core.intents import Deliver, Deposit, Eat, Sleep, StartAction, Take, Wait
 from pericles.core.inventory import capacity_for
 from pericles.core.state import Villager
 
@@ -155,3 +156,74 @@ def shelter(view: View, villager: Villager) -> Decision | None:
 
 def wait(view: View, villager: Villager) -> Decision:
     return Decision(Wait(villager.id))
+
+
+def demand(view: View, item: str) -> float:
+    """How much the village wants `item`, 0..1 (ADR-0016 §4)."""
+    if view.ctx.registry.items[item].nutrition > 0:
+        target = view.food_target()
+        return 0.0 if target <= 0 else max(0.0, target - view.food_stock()) / target
+    return 1.0 if view.needed()[item] > 0 else 0.0
+
+
+def utility(view: View, villager: Villager, action: ActionDef) -> float:
+    best = max(
+        demand(view, item) / (1 + view.workers(item, villager.id)) for item in action.outputs
+    )
+    return best * skill_score(view, villager, action)
+
+
+def work(view: View, villager: Villager) -> Decision | None:
+    wanted = [item for item in sorted(view.ctx.registry.items) if demand(view, item) > 0]
+    scored = [(utility(view, villager, a), a) for a in jobs(view, villager, wanted)]
+    ranked = [a for score, a in sorted(scored, key=lambda p: (-p[0], p[1].id)) if score > 0]
+    return first_reachable(view, villager, ranked)
+
+
+def deliver(view: View, villager: Villager) -> Decision | None:
+    registry = view.ctx.registry
+    for building in view.sites():
+        remaining = remaining_cost(building, registry)
+        for item in sorted(remaining):
+            have = villager.inventory.count(item)
+            if not have:
+                continue
+            step = view.go(villager, view.tiles(building))
+            if step is not None:
+                return Decision(step, target=building.id)
+            qty = min(have, remaining[item])
+            return Decision(Deliver(villager.id, building.id, item, qty), target=building.id)
+    return None
+
+
+def surplus(view: View, villager: Villager) -> list[tuple[str, int]]:
+    """Stackable items to store: all but a little food, never tools or what sites need."""
+    registry = view.ctx.registry
+    needed = view.needed()
+    extra = []
+    for item, qty in sorted(villager.inventory.items.items()):
+        if needed[item] > 0:
+            continue
+        nutrition = registry.items[item].nutrition
+        keep = math.floor(view.config.food_carry / nutrition) if nutrition > 0 else 0
+        if qty > keep:
+            extra.append((item, qty - keep))
+    return extra
+
+
+def deposit(view: View, villager: Villager) -> Decision | None:
+    load = villager.inventory.weight(view.ctx.registry)
+    if load < view.config.deposit_load * view.ctx.config.carry_limit:
+        return None
+    for item, qty in surplus(view, villager):
+        for building in view.stores(villager):
+            room = view.room(building)
+            if room <= 0:
+                continue
+            step = view.go(villager, view.tiles(building))
+            if step is not None:
+                return Decision(step, target=building.id)
+            return Decision(
+                Deposit(villager.id, building.id, item, min(qty, room)), target=building.id
+            )
+    return None

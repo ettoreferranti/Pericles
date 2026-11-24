@@ -159,7 +159,7 @@ def life(tmp_path_factory: pytest.TempPathFactory) -> Registry:
     return load_registry([base, extra])
 
 
-TERRAIN = {".": "grass", "~": "water", "T": "forest"}
+TERRAIN = {".": "grass", "~": "water", "T": "forest", "R": "rock"}
 
 
 @pytest.fixture
