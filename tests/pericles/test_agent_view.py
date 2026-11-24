@@ -5,7 +5,7 @@ from hypothesis import given
 from hypothesis import strategies as st
 
 from pericles.agents.config import AgentConfig
-from pericles.agents.view import Memory, NodeIndex, View
+from pericles.agents.view import Memory, NodeIndex, OriginCache, View
 from pericles.core.buildings import Building, Ownership
 from pericles.core.content.registry import Registry
 from pericles.core.context import Context
@@ -393,3 +393,112 @@ def test_free_origin_searches_the_whole_radius_and_no_further(
     state = make_world(ROWS)
     state.nodes["n0"] = Node("n0", "berry_bush", state.tilemap.start(), 5)
     assert view_of(registry, state, site_search_radius=0, site_gap=0).free_origin("house") is None
+
+
+def test_urgent_is_any_relief_at_or_past_its_urgent_level(
+    registry: Registry, make_world: MakeWorld
+) -> None:
+    """AC1: a villager is urgent when a need reaches `urgent_at` for its relief, not before."""
+    state = make_world(ROWS, [Villager("a", "A", Coord(0, 0))])
+    view = view_of(registry, state)
+    a = state.villagers["a"]
+    assert not view.urgent(a)
+    eat_at = view.config.urgent_at["eat"]
+    a.needs["hunger"] = eat_at - 0.5
+    assert not view.urgent(a)
+    a.needs["hunger"] = eat_at
+    assert view.urgent(a)
+    a.needs = {"fatigue": view.config.urgent_at["sleep"]}
+    assert view.urgent(a)
+
+
+def test_stored_food_and_food_demand_are_per_villager(
+    registry: Registry, make_world: MakeWorld
+) -> None:
+    """AC1: each villager sees the food in the stores it may use and does not avoid."""
+    a, b, c = (Villager(v, v.upper(), Coord(0, 0)) for v in "abc")
+    state = make_world(ROWS, [a, b, c])
+    building(state, "s0", "storehouse", Coord(4, 4))
+    building(state, "s1", "storehouse", Coord(6, 6), owner="b")
+    state.buildings["s0"].storage.add(registry, "berries", 2)
+    state.buildings["s1"].storage.add(registry, "berries", 3)
+    berry = registry.items["berries"].nutrition
+    memory = {"c": Memory(avoid={"s0": 50})}
+    view = view_of(registry, state, memory, food_reserve_per_capita=10 * berry)
+    target = view.food_target()
+    assert [view.stored_food(v) for v in (a, b, c)] == [2 * berry, 5 * berry, 0.0]
+    assert [view.stored_food(v) for v in (a, b, c)] == [2 * berry, 5 * berry, 0.0]
+    assert view.food_demand(a) == (target - 2 * berry) / target
+    assert view.food_demand(b) == (target - 5 * berry) / target
+    assert view.food_demand(c) == 1.0
+    assert view.food_demand(a) == (target - 2 * berry) / target
+    assert view_of(registry, state, food_reserve_per_capita=0.0).food_demand(a) == 0.0
+    plenty = view_of(registry, state, food_reserve_per_capita=berry / 3)
+    assert plenty.food_demand(b) == 0.0
+
+
+def test_remember_keeps_workers_builders_and_placers_current(
+    registry: Registry, make_world: MakeWorld
+) -> None:
+    """AC1: a decision recorded mid-tick is seen by the next villager's queries."""
+    a, b, c = (Villager(v, v.upper(), Coord(0, 0)) for v in "abc")
+    state = make_world(ROWS, [a, b, c])
+    memory = {"a": Memory(job="gather_berries"), "b": Memory(), "z": Memory(job="gather_berries")}
+    view = view_of(registry, state, memory)
+    assert view.workers("berries", exclude="c") == 1
+    assert view.builders("s1", exclude="c") == 0 and not view.placing("house", exclude="c")
+    view.remember("b", memory["b"], "s1", "construct")
+    view.remember("a", memory["a"], "place:house", None)
+    assert (memory["a"].target, memory["a"].job) == ("place:house", None)
+    assert view.workers("berries", exclude="c") == 0
+    assert view.builders("s1", exclude="c") == 1 and view.builders("s1", exclude="b") == 0
+    assert view.placing("house", exclude="c") and not view.placing("house", exclude="a")
+    view.remember("b", memory["b"], "n1", "gather_berries")
+    view.remember("a", memory["a"], None, None)
+    assert view.workers("berries", exclude="c") == 1
+    assert view.workers("berries", exclude="b") == 0
+    assert view.builders("s1", exclude="c") == 0 and not view.placing("house", exclude="c")
+    view.remember("z", memory["z"], "place:house", None)
+    assert not view.placing("house", exclude="c")
+
+
+def test_family_house_needs_free_beds_and_a_partner_owner(
+    registry: Registry, make_world: MakeWorld
+) -> None:
+    """AC1: the family house is another house either partner may use, with beds to spare."""
+    a = Villager("a", "A", Coord(0, 0), partner="b", home="h0")
+    b = Villager("b", "B", Coord(0, 0), partner="a", home="h0")
+    state = make_world(ROWS, [a, b])
+    building(state, "h0", "house", Coord(1, 1))
+    building(state, "h1", "house", Coord(9, 9), owner="b")
+    building(state, "h2", "house", Coord(3, 3), owner="z")
+    view = view_of(registry, state)
+    house = view.family_house(a)
+    assert house is not None and house.id == "h1"
+    assert view.family_house(b) is house
+    beds = registry.buildings["house"].housing
+    state.villagers.update(
+        {f"o{i}": Villager(f"o{i}", "O", Coord(0, 0), home="h1") for i in range(beds - 3)}
+    )
+    roomy = view_of(registry, state).family_house(a)
+    assert roomy is not None and roomy.id == "h1"
+    state.villagers["o9"] = Villager("o9", "O", Coord(0, 0), home="h1")
+    assert view_of(registry, state).family_house(a) is None
+
+
+def test_free_origins_kept_across_ticks_follow_new_buildings(
+    registry: Registry, make_world: MakeWorld
+) -> None:
+    """AC1: a remembered free origin is dropped once a building goes up there."""
+    state = make_world(ROWS)
+    config = AgentConfig(site_search_radius=4)
+    ctx = Context.build(registry, default_config())
+    index = NodeIndex(state.nodes.values(), config.index_cell)
+    origins = OriginCache()
+    first = View(ctx, state, config, index, {}, origins).free_origin("house")
+    assert first is not None
+    assert View(ctx, state, config, index, {}, origins).free_origin("house") == first
+    building(state, "h0", "house", first, complete=False)
+    second = View(ctx, state, config, index, {}, origins).free_origin("house")
+    assert second is not None and second != first
+    assert second == View(ctx, state, config, index, {}).free_origin("house")

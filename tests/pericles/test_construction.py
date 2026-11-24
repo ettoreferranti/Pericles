@@ -15,6 +15,7 @@ from pericles.core.intents import (
     MoveTo,
     PlaceBuilding,
     Take,
+    Wait,
 )
 from pericles.core.inventory import EPSILON, Tool
 from pericles.core.mapgen import TileMap
@@ -200,6 +201,26 @@ def test_a_new_wall_cuts_a_path_in_progress(econ: Registry, make_world: MakeWorl
     events = engine.step(state, [PlaceBuilding("a", "wall", Coord(2, 0))])[1]
     assert of(events, "move_failed") == [{"actor": "b", "target": [4, 0], "reason": "blocked"}]
     assert state.villagers["b"].pos == Coord(1, 0)
+
+
+@pytest.mark.req("REQ-SIM-004")
+def test_a_new_wall_reroutes_a_path_asked_for_earlier_that_day(
+    econ: Registry, make_world: MakeWorld
+) -> None:
+    """AC3: the same trip asked again after a wall goes up takes the way round it."""
+    villagers = [Villager("a", "Ana", Coord(2, 1)), Villager("b", "Bo", Coord(0, 0))]
+    state = make_world([".....", ".....", "....."], villagers)
+    engine = Engine(econ)
+    engine.step(state, [MoveTo("b", Coord(4, 0))])
+    assert state.villagers["b"].path[:1] == [Coord(2, 0)]
+    engine.step(state, [Wait("b")])
+    state.villagers["b"].pos = Coord(0, 0)
+    engine.step(state, [PlaceBuilding("a", "wall", Coord(2, 0))])
+    assert [b.kind for b in state.buildings.values()] == ["wall"]
+    events = engine.step(state, [MoveTo("b", Coord(4, 0))])[1]
+    path = state.villagers["b"].path
+    assert not of(events, "move_failed")
+    assert path[-1:] == [Coord(4, 0)] and Coord(2, 0) not in path
 
 
 @pytest.mark.req("REQ-SIM-004")

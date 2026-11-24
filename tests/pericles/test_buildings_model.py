@@ -7,6 +7,7 @@ from pericles.core.buildings import (
     footprint,
     housing_capacity,
     near,
+    near_footprint,
     remaining_cost,
     storage_capacity,
 )
@@ -66,6 +67,18 @@ def test_footprint_and_nearness() -> None:
     assert near(Coord(4, 4), tiles)
     assert not near(Coord(5, 5), tiles)
     assert not near(Coord(1, 4), tiles)
+
+
+@pytest.mark.req("REQ-SIM-009")
+@pytest.mark.parametrize("size", [(1, 1), (2, 1), (1, 3), (3, 2), (0, 2), (2, 0)])
+def test_nearness_to_a_footprint_needs_no_tile_list(size: tuple[int, int]) -> None:
+    """AC1: 'near' a footprint (Manhattan distance <= 1) without listing its tiles."""
+    origin = Coord(4, 5)
+    for x in range(0, 10):
+        for y in range(0, 11):
+            pos = Coord(x, y)
+            expected = near(pos, footprint(origin, size))
+            assert near_footprint(pos, origin, size) == expected, (pos, size)
 
 
 @pytest.mark.req("REQ-SIM-009")

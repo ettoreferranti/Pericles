@@ -59,6 +59,31 @@ def test_need_rates_are_modified_by_traits_and_world_modifiers(
     assert state.villagers["a"].needs["hunger"] == 2.0
 
 
+@pytest.mark.req("REQ-SIM-012")
+def test_a_modifier_naming_one_villager_changes_only_its_rate(
+    life: Registry, make_world: MakeWorld
+) -> None:
+    """AC1: a villager-scoped modifier applies to that villager only, whoever is asked first."""
+    personal = Modifier(Target("need", "hunger"), "rate", Op.ADD, 60.0, "test", Scope("b"))
+    for first, second in (("a", "b"), ("b", "a")):
+        state = make_world(ROWS, [ana(), Villager("b", "Bo", Coord(1, 0))])
+        state.modifiers = (personal,)
+        ctx = Engine(life).context
+        rate = life_rules.rate_table(ctx, state)
+        hunger = life.needs["hunger"]
+        rates = {vid: rate(state.villagers[vid], hunger) for vid in (first, second)}
+        assert rates == {"a": 60.0, "b": 120.0}
+
+
+@pytest.mark.req("REQ-SIM-012")
+def test_trait_modifiers_are_prepared_once_with_their_source(life: Registry) -> None:
+    """AC1: each trait's modifiers are built once, credited to the trait (as `explain` shows)."""
+    ctx = Engine(life).context
+    hardy = ctx.traits["hardy"]
+    assert hardy and all(m.source == "trait:hardy" for m in hardy)
+    assert set(ctx.traits) == set(life.traits)
+
+
 @pytest.mark.req("REQ-SIM-003")
 def test_winter_multiplies_need_rates(life: Registry, make_world: MakeWorld) -> None:
     """AC2: in winter the food and warmth need rates are multiplied by the winter modifiers."""
