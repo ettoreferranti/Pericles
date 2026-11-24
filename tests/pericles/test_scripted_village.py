@@ -173,3 +173,148 @@ def test_scripted_villagers_house_themselves_and_pair_up(
     assert any(b.complete and b.kind == "house" for b in state.buildings.values())
     assert all(v.home is not None for v in state.villagers.values())
     assert all(v.partner is not None for v in state.villagers.values())
+
+
+def test_a_single_homeless_villager_or_a_small_storage_gap_is_enough(
+    registry: Registry, make_world: MakeWorld
+) -> None:
+    """AC1: a shortfall of just one bed, or less than one unit of storage, still gets a building."""
+    a = Villager("a", "A", Coord(8, 8))
+    state = make_world(ROWS, [a])
+    decision = rules.build(view_of(registry, state, storage_per_capita=0.0), a)
+    assert decision is not None and decision.target == "place:house"
+    a.home = "h0"
+    house(state, "h0", Coord(1, 1))
+    wanted = registry.buildings["house"].storage + 0.5  # leaves half a unit uncovered
+    decision = rules.build(view_of(registry, state, storage_per_capita=wanted), a)
+    assert decision is not None and decision.target == "place:storehouse"
+
+
+def test_own_claim_and_own_work_do_not_count_against_the_builder(
+    registry: Registry, make_world: MakeWorld
+) -> None:
+    """AC1: a villager's own placing claim or construction does not block it from continuing."""
+    a = Villager("a", "A", Coord(8, 8))
+    state = make_world(ROWS, [a])
+    own = {"a": Memory(target="place:house")}
+    decision = rules.build(view_of(registry, state, own, storage_per_capita=0.0), a)
+    assert decision is not None and decision.target == "place:house"
+    b = Villager("b", "B", Coord(3, 4), home="h0")
+    state = make_world(ROWS, [b])
+    house(state, "h0", Coord(10, 10))
+    supplied_site(state, registry)
+    mine = {"b": Memory(job=CONSTRUCT, target="s1")}
+    view = view_of(registry, state, mine, storage_per_capita=0.0, max_builders=1)
+    decision = rules.build(view, b)
+    assert decision is not None and decision.intent == Construct("b", "s1")
+
+
+def test_build_skips_unsupplied_and_full_sites_for_a_later_one(
+    registry: Registry, make_world: MakeWorld
+) -> None:
+    """AC1: an unsupplied or fully staffed site does not stop a villager from building another."""
+    a = Villager("a", "A", Coord(3, 4), home="h0")
+    state = make_world(ROWS, [a])
+    house(state, "h0", Coord(10, 10))
+    state.buildings["s0"] = Building("s0", "house", Coord(6, 6), Ownership("communal"))
+    supplied_site(state, registry)
+    decision = rules.build(view_of(registry, state, storage_per_capita=0.0), a)
+    assert decision is not None and decision.target == "s1"
+    state.buildings["s0"].delivered = dict(registry.buildings["house"].cost)
+    busy = {f"o{i}": Memory(job=CONSTRUCT, target="s0") for i in range(3)}
+    for vid in busy:
+        state.villagers[vid] = Villager(vid, "O", Coord(0, 0), home="h0")
+    view = view_of(registry, state, busy, storage_per_capita=0.0, max_builders=3)
+    decision = rules.build(view, a)
+    assert decision is not None and decision.target == "s1"
+
+
+def test_builders_walk_to_sites_and_spots_before_working(
+    registry: Registry, make_world: MakeWorld
+) -> None:
+    """AC1: a distant villager walks to the site or the chosen spot; a near one acts."""
+    a = Villager("a", "A", Coord(15, 15), home="h0")
+    state = make_world(ROWS, [a])
+    house(state, "h0", Coord(10, 10))
+    site = supplied_site(state, registry)
+    view = view_of(registry, state, storage_per_capita=0.0)
+    decision = rules.build(view, a)
+    assert decision is not None
+    assert decision.intent == view.go(a, view.tiles(site)) and decision.intent is not None
+    assert (decision.target, decision.job) == ("s1", CONSTRUCT)
+    state = make_world(ROWS, [Villager("a", "A", Coord(15, 15))])
+    a = state.villagers["a"]
+    view = view_of(registry, state, storage_per_capita=0.0)
+    origin = view.free_origin("house")
+    assert origin is not None
+    decision = rules.build(view, a)
+    assert decision is not None and decision.target == "place:house" and decision.job is None
+    walk = view.go(a, footprint(origin, registry.buildings["house"].footprint))
+    assert walk is not None and decision.intent == walk
+    a.pos = origin
+    decision = rules.build(view_of(registry, state, storage_per_capita=0.0), a)
+    assert decision is not None
+    assert decision.intent == PlaceBuilding("a", "house", origin, ownership="communal")
+
+
+def test_no_free_spot_means_nothing_to_place(registry: Registry, make_world: MakeWorld) -> None:
+    """AC1: a wanted building with nowhere to stand is not placed."""
+    a = Villager("a", "A", Coord(8, 8))
+    state = make_world(ROWS, [a])
+    start = state.tilemap.start()
+    state.nodes["blocker"] = Node("blocker", "tree", start, 10)
+    view = view_of(registry, state, storage_per_capita=0.0, site_search_radius=0)
+    assert view.free_origin("house") is None
+    assert rules.build(view, a) is None
+
+
+def test_a_housed_villager_stays_put_and_homes_carry_their_target(
+    registry: Registry, make_world: MakeWorld
+) -> None:
+    """AC1: a housed villager keeps its home though another is nearer; moves name the house."""
+    c = Villager("c", "C", Coord(8, 8), home="h0")
+    state = make_world(ROWS, [c])
+    house(state, "h0", Coord(1, 1))
+    house(state, "h1", Coord(9, 9))
+    assert rules.home(view_of(registry, state), c) is None
+    c.home = None
+    decision = rules.home(view_of(registry, state), c)
+    assert decision is not None
+    assert (decision.intent, decision.target) == (SetHome("c", "h1"), "h1")
+
+
+def test_compatible_needs_two_known_sexes(registry: Registry, make_world: MakeWorld) -> None:
+    """AC1: a pair is compatible only when both sexes are known and differ."""
+    a = Villager("a", "A", Coord(0, 0), sex="female")
+    m = Villager("m", "M", Coord(1, 0), sex="male")
+    unknown = Villager("u", "U", Coord(1, 1), sex=None)
+    view = view_of(registry, make_world(ROWS, [a, m, unknown]))
+    assert rules.compatible(view, a, m)
+    assert not rules.compatible(view, a, None)
+    assert not rules.compatible(view, a, unknown)
+    assert not rules.compatible(view, unknown, m)
+    assert not rules.compatible(view, unknown, unknown)
+
+
+def test_couple_decisions_name_their_target_and_respect_avoidance(
+    registry: Registry, make_world: MakeWorld
+) -> None:
+    """AC1: accepting or proposing targets the partner; avoided villagers are passed over."""
+    a = Villager("a", "A", Coord(0, 0), sex="female")
+    m1 = Villager("m1", "M", Coord(5, 0), sex="male")
+    m2 = Villager("m2", "M", Coord(2, 0), sex="male")
+    state = make_world(ROWS, [a, m1, m2])
+    decision = rules.couple(view_of(registry, state), a)
+    assert decision is not None
+    assert (decision.intent, decision.target) == (ProposeCouple("a", "m2"), "m2")
+    avoid_m2 = {"a": Memory(avoid={"m2": 99})}
+    decision = rules.couple(view_of(registry, state, avoid_m2), a)
+    assert decision is not None and decision.intent == ProposeCouple("a", "m1")
+    assert decision.target == "m1"
+    state.proposals["m1"] = Proposal("a", 50)
+    decision = rules.couple(view_of(registry, state), a)
+    assert decision is not None
+    assert (decision.intent, decision.target) == (AcceptCouple("a", "m1"), "m1")
+    avoid_m1 = {"a": Memory(avoid={"m1": 99})}
+    decision = rules.couple(view_of(registry, state, avoid_m1), a)
+    assert decision is not None and decision.intent == ProposeCouple("a", "m2")
