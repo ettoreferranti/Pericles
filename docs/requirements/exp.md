@@ -11,7 +11,7 @@ Must · M4 · Accepted
 - AC2: `meta.json` records versions, seed, mode, cache mode and a `reproducible` flag (false for live mode).
 
 ### REQ-EXP-003: Run directory
-Must · M1 · Accepted
+Must · M1 · Implemented
 - AC1: A run writes the config snapshot, `events.sqlite`, periodic snapshots, `llm_cache/`, metrics and `meta.json`.
 - AC2: Event writes are transactional per tick.
 - AC3: A run can be resumed from its last snapshot after a crash.

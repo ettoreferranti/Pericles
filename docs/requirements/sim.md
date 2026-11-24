@@ -95,7 +95,7 @@ Must · M1 · Implemented
 - AC3: Birth-rate parameters allow population doubling within a configurable number of in-game days in good conditions (Timberborn-like growth).
 
 ### REQ-SIM-016: Children and coming of age
-Must · M1 · Accepted
+Must · M1 · Implemented
 - AC1: Children run on scripted behaviour (stay near a parent, eat, light gathering) and never cause an LLM call.
 - AC2: At `adult_age`, a child becomes an adult agent. Its model is assigned by the configured rule (default: one parent's model, chosen with the seeded RNG).
 - AC3: The new adult's memory is seeded from the notable events it witnessed.

@@ -8,7 +8,17 @@ experimenter can change during a run.
 - Requirements: [docs/requirements/](docs/requirements/README.md)
 - Architecture decisions: [docs/adr/](docs/adr/README.md)
 
-Status: M1c Life and population complete; M1d Running villages next.
+Status: M1 Headless sim is built (M1a to M1d); REQ-NFR-003 (engine speed) is still Accepted pending a faster margin, so M1 is not yet marked done.
+
+## Run a village
+
+```bash
+uv run pericles run experiments/baseline.yaml --out runs/baseline
+uv run pericles resume runs/baseline --days 90
+PYTHONPATH=tools uv run python -m pericles_tools.bench     # REQ-NFR-003 check
+uv run pytest -m long                                      # baseline village tests
+uv run pytest -m perf                                      # perf test (target machine)
+```
 
 ## Development
 
