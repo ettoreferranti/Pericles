@@ -190,3 +190,19 @@ def test_agents_have_no_magic_numbers() -> None:
             if (name, scope, value) not in AGENT_ALLOWED_NUMBERS
         ]
     assert offenders == []
+
+
+@pytest.mark.req("REQ-EXP-003")
+def test_analysis_reads_only_the_event_schema() -> None:
+    """AC1: metrics derive from the event log and config, independent of the engine and agents."""
+    import pericles.analysis
+
+    root = Path(pericles.analysis.__file__).parent
+    offenders = [
+        f"{path.name}: {name}"
+        for path in sorted(root.rglob("*.py"))
+        for name in imported_modules(path, "pericles.analysis")
+        if name.startswith("pericles")
+        and not name.startswith(("pericles.core.events", "pericles.analysis"))
+    ]
+    assert offenders == []

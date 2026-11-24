@@ -391,3 +391,28 @@ def test_a_storehouse_site_does_not_hold_back_another_storehouse(
     state.buildings["s0"] = Building("s0", "storehouse", Coord(12, 12), Ownership("communal"))
     view = view_of(registry, state, storage_per_capita=1000.0)
     assert rules.wanted_building(view, a) == "storehouse"
+
+
+def test_couples_without_a_spare_bed_at_home_want_another_house(
+    registry: Registry, make_world: MakeWorld
+) -> None:
+    """AC1: a couple apart, or together in a full house, counts one bed short (room for a child)."""
+    capacity = registry.buildings["house"].housing
+    a = Villager("a", "A", Coord(8, 8), sex="female", adult=True, partner="b", home="h0")
+    b = Villager("b", "B", Coord(8, 8), sex="male", adult=True, partner="a", home="h1")
+    state = make_world(ROWS, [a, b])
+    house(state, "h0", Coord(1, 1))
+    house(state, "h1", Coord(10, 1))
+    for hid in ("h0", "h1"):
+        for i in range(capacity - 1):
+            state.villagers[f"{hid}r{i}"] = Villager(f"{hid}r{i}", "R", Coord(0, 0), home=hid)
+    view = view_of(registry, state, storage_per_capita=0.0)
+    assert view.housing_shortfall() == 1  # living apart, every bed taken
+    decision = rules.build(view, a)
+    assert decision is not None and decision.target == "place:house"
+    del state.villagers["h0r0"]
+    b.home = "h0"
+    state.villagers["h1r9"] = Villager("h1r9", "R", Coord(0, 0), home="h1")
+    assert view_of(registry, state, storage_per_capita=0.0).housing_shortfall() == 1  # full
+    del state.villagers["h0r1"]
+    assert view_of(registry, state, storage_per_capita=0.0).housing_shortfall() == -1

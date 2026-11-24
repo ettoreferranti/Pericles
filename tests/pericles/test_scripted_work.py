@@ -60,12 +60,30 @@ def test_demand_measures_food_shortfall_and_needed_materials(
     view = view_of(registry, state, food_reserve_per_capita=100.0)
     assert rules.demand(view, "berries") == 1.0
     assert rules.demand(view, "wood") == 0.0
-    a.inventory.add(registry, "berries", 4)  # 60 nutrition of the 100 wanted
+    storehouse(state).storage.add(registry, "berries", 4)  # 60 nutrition of the 100 wanted
     site(state)
     view = view_of(registry, state, food_reserve_per_capita=100.0)
     assert rules.demand(view, "berries") == pytest.approx(0.4)
     assert rules.demand(view, "wood") == 1.0
     assert rules.demand(view, "iron") == 0.0
+
+
+def test_food_in_pockets_does_not_meet_the_village_demand(
+    registry: Registry, make_world: MakeWorld
+) -> None:
+    """AC1: only stored food counts towards the reserve; a hoard in one villager's pocket
+    feeds nobody else (children eat only from hand or store; baseline seeds 1 and 3)."""
+    a = Villager("a", "A", Coord(0, 0))
+    state = make_world(ROWS, [a])
+    a.inventory.add(registry, "berries", 40)  # 600 nutrition, six times the reserve
+    view = view_of(registry, state, food_reserve_per_capita=100.0)
+    assert rules.demand(view, "berries") == 1.0
+    house = Building("h", "house", Coord(5, 5), Ownership("personal", ("a",)), complete=True)
+    house.storage.add(registry, "berries", 2)
+    state.buildings["h"] = house
+    view = view_of(registry, state, food_reserve_per_capita=100.0)
+    assert rules.demand(view, "berries") == pytest.approx(0.7)
+    assert view.stored_food() == 30.0
 
 
 def test_work_follows_skill_when_demands_tie(registry: Registry, make_world: MakeWorld) -> None:
@@ -112,11 +130,11 @@ def test_work_skips_full_hands_avoided_and_depleted_nodes(
 def test_nothing_wanted_means_wait(registry: Registry, make_world: MakeWorld) -> None:
     """AC1: with food stocked and no site open, there is no work to do."""
     a = Villager("a", "A", Coord(5, 2), home="h0")  # housed, so the village builds nothing
-    a.inventory.add(registry, "berries", 10)
     state = make_world(ROWS, [a], BUSHES)
     state.buildings["h0"] = Building(
         "h0", "house", Coord(1, 1), Ownership("communal"), complete=True
     )
+    state.buildings["h0"].storage.add(registry, "berries", 10)  # the stores hold the reserve
     assert ScriptedMind().decide(
         view_of(registry, state, food_reserve_per_capita=10.0), a
     ).intent == Wait("a")

@@ -27,6 +27,8 @@ jobs:
         run: uv run mypy
       - name: Tests
         run: uv run pytest
+      - name: Long tests (whole-village runs)
+        run: uv run pytest -m long
       - name: Traceability
         run: uv run python -m pericles_tools.traceability check
       - name: ADRs

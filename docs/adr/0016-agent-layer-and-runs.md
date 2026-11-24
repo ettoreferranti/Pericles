@@ -27,14 +27,14 @@ M1d closes milestone M1: villages that run on their own (REQ-AGT-008, REQ-SIM-01
 3. **Scripted decisions are stateless rules over a read-only `View`.**
    - Each rule looks at the world and the controller memory and returns a decision or nothing. The first rule that fires wins.
    - Adult order: eat → sleep → shelter → couple → home → deliver → deposit → build → work → wait.
-   - Child order: eat (inventory or store only) → sleep → shelter → follow a parent → deposit → forage near the parent → wait.
+   - Child order: eat (inventory or store, else forage near the parent) → sleep → shelter → follow a parent → deposit → forage near the parent → wait.
    - Needs are found by their `relief` kind. Thresholds are `act_at[relief]` and `urgent_at[relief]`.
    - The `View` keeps a grid index of nodes by kind, because nodes never move, and caches its per-tick queries.
 4. **The village plan is derived, not stored.**
-   - **Food demand** is the shortfall of the village's total nutrition below `food_reserve_per_capita` × population, as a fraction.
+   - **Food demand** is the shortfall of the nutrition held in buildings' storage below `food_reserve_per_capita` × population, as a fraction. Food in villagers' inventories does not count: children can only eat from hand or from a store.
    - **Material demand** is 1 for every item an unfinished site still needs.
    - **Choosing a job.** A villager takes the doable node action with the highest `demand / (1 + others on that output) × (1 + skill_weight × skill / max_skill)`. Ties go to the action id. The villager then goes to the nearest unavoided node with stock.
-   - **Houses.** When homeless villagers outnumber free communal housing plus the housing of open house sites, one villager places a communal `house_building`.
+   - **Houses.** When the beds wanted outnumber free communal housing plus the housing of open house sites, one villager places a communal `house_building`. Beds wanted are the homeless villagers' beds plus one for each couple that does not share a complete home with a free bed, since conception needs one.
    - **Storehouse.** When communal storage is below `storage_per_capita` × population, one villager places a communal `store_building`.
    - At most one villager claims each placement, recorded as target `place:<kind>`.
    - Sites are supplied by whoever carries what they need. Up to `max_builders` villagers build each site once its materials are in.
@@ -55,6 +55,8 @@ M1d closes milestone M1: villages that run on their own (REQ-AGT-008, REQ-SIM-01
    - Resume walks snapshots newest first. It skips files that do not parse or whose tick does not match their name, and snapshots ahead of the event log. It restores the first usable one and truncates the log to it.
    - The run-directory schema version becomes 3.
 8. **Performance.** REQ-NFR-003 is checked by `tests/pericles/test_perf.py`, marked `perf` and excluded by default like `slow`, and by `pericles_tools.bench`. Both run on the user's Mac, not in CI. Optimisations must leave the event digest of a pinned scripted run unchanged.
+
+Amended on 2026-11-24, during the M1d baseline-village tuning (Task 10). Food demand counts stored food only, houses are wanted for couples without a free bed, and a hungry child forages before it sleeps. Without these, the baseline village never had room for a child, and its children starved in winter.
 
 ## Consequences
 

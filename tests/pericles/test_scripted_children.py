@@ -169,3 +169,18 @@ def test_the_scripted_controller_carries_the_given_minds(
     mind = ScriptedMind()
     assert scripted_controller(ctx, CONFIG, {"k": mind}).minds == {"k": mind}
     assert scripted_controller(ctx, CONFIG).minds == {}
+
+
+@pytest.mark.req("REQ-SIM-016")
+def test_a_hungry_child_with_nothing_to_eat_forages_before_sleeping(
+    registry: Registry, make_world: MakeWorld
+) -> None:
+    """AC1: eat comes first; a hungry, tired child with no food forages rather than sleeps.
+
+    Sleeping first let a child that hovers at the sleep threshold alternate between a tick of
+    sleep and the walk to a bush, finishing neither, until it starved (baseline seed 1).
+    """
+    bush = Node("b0", "berry_bush", Coord(3, 3), 20)
+    tired = {**HUNGRY, "fatigue": CONFIG.act_at["sleep"]}
+    state = make_world(ROWS, family(Coord(3, 2), needs=tired), [bush])
+    assert decide(registry, state).intent == StartAction("k", "gather_berries", "b0")

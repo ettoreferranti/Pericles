@@ -6,15 +6,18 @@ import json
 import os
 import platform
 import re
-from collections.abc import Iterator, Mapping
+from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+import pyarrow as pa
+import pyarrow.parquet as pq
 import yaml
 
 import pericles
+from pericles.analysis.metrics import Row
 from pericles.core.canonical import canonical_json
 from pericles.core.state import WorldState
 from pericles.experiment.eventlog import EventLog
@@ -46,6 +49,7 @@ class Snapshot:
     agents: dict[str, Any]
 
 
+METRICS = "metrics.parquet"
 SNAPSHOT_NAME = re.compile(r"tick-(\d{10})\.json")
 
 
@@ -157,6 +161,28 @@ class RunDirectory:
 
     def latest_snapshot(self) -> Snapshot | None:
         return next(self.snapshots(), None)
+
+    def write_metrics(self, rows: Sequence[Row]) -> Path:
+        """Replace metrics.parquet durably: one (day, metric, value) row per entry."""
+        table = pa.table(
+            {
+                "day": pa.array([r.day for r in rows], pa.int64()),
+                "metric": pa.array([r.metric for r in rows], pa.string()),
+                "value": pa.array([r.value for r in rows], pa.float64()),
+            }
+        )
+        target = self.path / METRICS
+        temporary = target.with_suffix(target.suffix + ".tmp")
+        pq.write_table(table, temporary)
+        with open(temporary, "rb") as handle:
+            os.fsync(handle.fileno())
+        os.replace(temporary, target)
+        _fsync_dir(self.path)
+        return target
+
+    def read_metrics(self) -> list[Row]:
+        table = pq.read_table(self.path / METRICS)
+        return [Row(int(r["day"]), str(r["metric"]), float(r["value"])) for r in table.to_pylist()]
 
     def close(self) -> None:
         if self._event_log is not None:

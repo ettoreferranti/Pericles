@@ -138,6 +138,7 @@ class View:
         self._blocked: frozenset[Coord] | None = None
         self._needed: Counter[str] | None = None
         self._stock: float | None = None
+        self._stored: float | None = None
         self._origins: dict[str, Coord | None] = {}
 
     @property
@@ -233,6 +234,17 @@ class View:
             self._stock = food_stock(self.ctx, self.state)
         return self._stock
 
+    def stored_food(self) -> float:
+        """Nutrition held in buildings' storage: the food anyone, children too, can fetch."""
+        if self._stored is None:
+            items = self.ctx.registry.items
+            self._stored = sum(
+                items[item].nutrition * qty
+                for building in self.state.buildings.values()
+                for item, qty in building.storage.totals().items()
+            )
+        return self._stored
+
     def food_target(self) -> float:
         return self.config.food_reserve_per_capita * self.population()
 
@@ -298,14 +310,36 @@ class View:
             if b.complete == complete and b.ownership.kind == "communal"
         )
 
-    def housing_shortfall(self) -> int:
-        """Homeless villagers less free communal beds and beds under construction.
+    def crowded_couples(self) -> int:
+        """Couples who do not share a complete home with a free bed: no room for a child.
 
-        Negative when the village has more beds, built or planned, than homeless villagers.
+        Each couple counts once, by its bearing partner (ADR-0016 §4, amended).
+        """
+        registry, villagers = self.ctx.registry, self.state.villagers
+        crowded = 0
+        for villager in villagers.values():
+            partner = villagers.get(villager.partner) if villager.partner is not None else None
+            if partner is None or villager.sex != self.ctx.config.bearing_sex:
+                continue
+            home = self.home(villager)
+            roomy = (
+                home is not None
+                and partner.home == home.id
+                and occupants(self.state, home.id) < registry.buildings[home.kind].housing
+            )
+            crowded += 0 if roomy else 1
+        return crowded
+
+    def housing_shortfall(self) -> int:
+        """Homeless villagers' beds, plus a bed per crowded couple, less free communal beds
+        and beds under construction.
+
+        Negative when the village has more beds, built or planned, than it needs.
         """
         homeless = sum(
             beds_needed(v) for v in self.state.villagers.values() if self.home(v) is None
         )
+        homeless += self.crowded_couples()
         registry = self.ctx.registry
         free = sum(
             registry.buildings[b.kind].housing - occupants(self.state, b.id)

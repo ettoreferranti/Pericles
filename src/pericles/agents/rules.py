@@ -173,10 +173,13 @@ def wait(view: View, villager: Villager) -> Decision:
 
 
 def demand(view: View, item: str) -> float:
-    """How much the village wants `item`, 0..1 (ADR-0016 §4)."""
+    """How much the village wants `item`, 0..1 (ADR-0016 §4, amended).
+
+    Food is wanted until the stores hold the reserve; food in pockets does not count.
+    """
     if view.ctx.registry.items[item].nutrition > 0:
         target = view.food_target()
-        return 0.0 if target <= 0 else max(0.0, target - view.food_stock()) / target
+        return 0.0 if target <= 0 else max(0.0, target - view.stored_food()) / target
     return 1.0 if view.needed()[item] > 0 else 0.0
 
 
@@ -342,10 +345,10 @@ def couple(view: View, villager: Villager) -> Decision | None:
 
 
 def child_eat(view: View, villager: Villager) -> Decision | None:
-    """Children eat what they hold or what a store holds; they forage separately, near family."""
+    """Children eat what they hold or what a store holds, else forage near family for it."""
     if view.level(villager, EAT) < view.config.act_at[EAT]:
         return None
-    return feed(view, villager)
+    return feed(view, villager) or forage(view, villager)
 
 
 def follow(view: View, villager: Villager) -> Decision | None:
