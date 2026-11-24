@@ -15,8 +15,11 @@ class ScriptedMind:
         rules.eat,
         rules.sleep,
         rules.shelter,
+        rules.couple,
+        rules.home,
         rules.deliver,
         rules.deposit,
+        rules.build,
         rules.work,
     )
 

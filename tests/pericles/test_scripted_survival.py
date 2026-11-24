@@ -21,8 +21,18 @@ from pericles.experiment.defaults import default_config
 pytestmark = pytest.mark.req("REQ-AGT-008")
 MakeWorld = Callable[..., WorldState]
 ROWS = ["." * 10] * 10
-CONFIG = AgentConfig()
+CONFIG = AgentConfig(storage_per_capita=0.0)  # these tests are not about storehouses
 EAT_AT, SLEEP_AT, COLD_AT = CONFIG.act_at["eat"], CONFIG.act_at["sleep"], CONFIG.act_at["shelter"]
+
+
+def housed(state: WorldState, *villagers: Villager) -> WorldState:
+    """Give the villagers a communal house beside them, so the village builds nothing."""
+    state.buildings["h0"] = Building(
+        "h0", "house", Coord(0, 1), Ownership("communal"), complete=True
+    )
+    for villager in villagers:
+        villager.home = "h0"
+    return state
 
 
 def decide(
@@ -103,7 +113,7 @@ def test_below_the_threshold_nothing_fires(registry: Registry, make_world: MakeW
         Coord(0, 0),
         needs={"hunger": EAT_AT - 1, "fatigue": SLEEP_AT - 1, "cold": COLD_AT - 1},
     )
-    assert decide(registry, make_world(ROWS, [a])).intent == Wait("a")
+    assert decide(registry, housed(make_world(ROWS, [a]), a)).intent == Wait("a")
 
 
 def test_tired_villagers_sleep_at_home_if_they_can(
@@ -187,8 +197,11 @@ def test_no_gathering_without_room_to_carry(registry: Registry, make_world: Make
     """AC1: a villager whose hands are full of other goods does not walk to a node it cannot use."""
     a = Villager("a", "A", Coord(0, 0), needs={"hunger": EAT_AT})
     a.inventory.add(registry, "wood", 15)
-    state = make_world(ROWS, [a], [Node("n0", "berry_bush", Coord(4, 0), 5)])
-    assert decide(registry, state).intent == Wait("a")
+    state = housed(make_world(ROWS, [a], [Node("n0", "berry_bush", Coord(4, 0), 5)]), a)
+    avoid_house = {
+        "a": Memory(avoid={"h0": state.tick + 50})
+    }  # keep the wood out of the house store
+    assert decide(registry, state, memory=avoid_house).intent == Wait("a")
 
 
 def test_an_avoided_or_empty_node_is_not_a_target(
@@ -197,7 +210,7 @@ def test_an_avoided_or_empty_node_is_not_a_target(
     """AC1: nodes that failed recently, or are exhausted, are passed over."""
     a = Villager("a", "A", Coord(0, 0), needs={"hunger": EAT_AT})
     nodes = [Node("n0", "berry_bush", Coord(2, 0), 5), Node("n1", "berry_bush", Coord(0, 6), 0)]
-    state = make_world(ROWS, [a], nodes)
+    state = housed(make_world(ROWS, [a], nodes), a)
     avoid = {"a": Memory(avoid={"n0": state.tick + 50})}
     assert decide(registry, state, memory=avoid).intent == Wait("a")
 

@@ -27,6 +27,7 @@ def view_of(
     registry: Registry, state: WorldState, memory: dict[str, Memory] | None = None, **cfg: object
 ) -> View:
     ctx = Context.build(registry, default_config())
+    cfg.setdefault("storage_per_capita", 0.0)  # these tests are not about storehouses
     config = AgentConfig(**cfg)  # type: ignore[arg-type]
     return View(
         ctx, state, config, NodeIndex(state.nodes.values(), config.index_cell), memory or {}
@@ -110,9 +111,12 @@ def test_work_skips_full_hands_avoided_and_depleted_nodes(
 
 def test_nothing_wanted_means_wait(registry: Registry, make_world: MakeWorld) -> None:
     """AC1: with food stocked and no site open, there is no work to do."""
-    a = Villager("a", "A", Coord(5, 2))
+    a = Villager("a", "A", Coord(5, 2), home="h0")  # housed, so the village builds nothing
     a.inventory.add(registry, "berries", 10)
     state = make_world(ROWS, [a], BUSHES)
+    state.buildings["h0"] = Building(
+        "h0", "house", Coord(1, 1), Ownership("communal"), complete=True
+    )
     assert ScriptedMind().decide(
         view_of(registry, state, food_reserve_per_capita=10.0), a
     ).intent == Wait("a")

@@ -5,11 +5,25 @@ from __future__ import annotations
 import math
 from collections.abc import Callable, Iterable, Sequence
 
-from pericles.agents.view import Decision, View
-from pericles.core.buildings import remaining_cost
+from pericles.agents.view import CONSTRUCT, PLACE, Decision, View
+from pericles.core.buildings import footprint, remaining_cost
 from pericles.core.content.schema import ActionDef
 from pericles.core.geometry import Coord
-from pericles.core.intents import Deliver, Deposit, Eat, Sleep, StartAction, Take, Wait
+from pericles.core.intents import (
+    AcceptCouple,
+    Construct,
+    Deliver,
+    Deposit,
+    Eat,
+    Intent,
+    PlaceBuilding,
+    ProposeCouple,
+    SetHome,
+    Sleep,
+    StartAction,
+    Take,
+    Wait,
+)
 from pericles.core.inventory import capacity_for
 from pericles.core.state import Villager
 
@@ -227,3 +241,99 @@ def deposit(view: View, villager: Villager) -> Decision | None:
                 Deposit(villager.id, building.id, item, min(qty, room)), target=building.id
             )
     return None
+
+
+COMMUNAL = "communal"
+
+
+def wanted_building(view: View, villager: Villager) -> str | None:
+    """The building kind the village lacks and nobody else is placing (ADR-0016 §4)."""
+    config = view.config
+    wants = (
+        (config.house_building, view.housing_shortfall() > 0),
+        (config.store_building, view.storage_shortfall() > 0),
+    )
+    for kind, short in wants:
+        if (
+            short
+            and not view.placing(kind, villager.id)
+            and not view.avoided(villager, PLACE + kind)
+        ):
+            return kind
+    return None
+
+
+def build(view: View, villager: Villager) -> Decision | None:
+    if not villager.adult:
+        return None
+    registry = view.ctx.registry
+    for building in view.sites():
+        if remaining_cost(building, registry):
+            continue
+        if view.builders(building.id, villager.id) >= view.config.max_builders:
+            continue
+        step = view.go(villager, view.tiles(building))
+        intent: Intent = step if step is not None else Construct(villager.id, building.id)
+        return Decision(intent, target=building.id, job=CONSTRUCT)
+    kind = wanted_building(view, villager)
+    origin = view.free_origin(kind) if kind is not None else None
+    if kind is None or origin is None:
+        return None
+    step = view.go(villager, footprint(origin, registry.buildings[kind].footprint))
+    intent = (
+        step if step is not None else PlaceBuilding(villager.id, kind, origin, ownership=COMMUNAL)
+    )
+    return Decision(intent, target=PLACE + kind)
+
+
+def home(view: View, villager: Villager) -> Decision | None:
+    current = view.home(villager)
+    partner = view.state.villagers.get(villager.partner) if villager.partner is not None else None
+    apart = partner is not None and partner.home is not None and partner.home != villager.home
+    if current is not None and not apart:
+        return None
+    house = view.house_for(villager)
+    if house is None or house.id == villager.home:
+        return None
+    return Decision(SetHome(villager.id, house.id), target=house.id)
+
+
+def compatible(view: View, a: Villager, b: Villager | None) -> bool:
+    """Exactly one of the pair has the bearing sex (ADR-0015 §6)."""
+    if b is None or a.sex is None or b.sex is None:
+        return False
+    bearing = view.ctx.config.bearing_sex
+    return (a.sex == bearing) != (b.sex == bearing)
+
+
+def couple(view: View, villager: Villager) -> Decision | None:
+    if not view.config.couples or not villager.adult or villager.partner is not None:
+        return None
+    state = view.state
+    for proposer in sorted(state.proposals):
+        proposal = state.proposals[proposer]
+        if (
+            proposal.target == villager.id
+            and proposal.expires_tick > state.tick
+            and not view.avoided(villager, proposer)
+            and compatible(view, villager, state.villagers.get(proposer))
+        ):
+            return Decision(AcceptCouple(villager.id, proposer), target=proposer)
+    if villager.id in state.proposals:
+        return None
+    targeted = {p.target for p in state.proposals.values()}
+    free = [
+        other
+        for other in state.villagers.values()
+        if other.id != villager.id
+        and other.adult
+        and other.partner is None
+        and other.id not in state.proposals
+        and other.id not in targeted
+        and compatible(view, villager, other)
+        and not view.avoided(villager, other.id)
+    ]
+    if not free:
+        return None
+    other = min(free, key=lambda o: (villager.pos.manhattan(o.pos), o.id))
+    return Decision(ProposeCouple(villager.id, other.id), target=other.id)
