@@ -26,6 +26,7 @@ items:
   - {id: crumb, weight: 0.1, nutrition: 1, tags: [food]}
 actions:
   - {id: a_berry, duration_ticks: 2, outputs: {berries: 1}, location: {node: bush}}
+  - {id: a_frozen, duration_ticks: 2, outputs: {wood: 1}, tags: [sowing], location: {node: tree}}
   - {id: a_inputs, duration_ticks: 2, inputs: {seed: 1}, outputs: {wood: 1}, location: {node: tree}}
   - {id: a_tool, duration_ticks: 2, outputs: {wood: 1}, requires: {tools: [hammer]}, location: {node: tree}}
   - {id: a_know, duration_ticks: 2, outputs: {wood: 1}, requires: {knowledge: true}, location: {node: tree}}
@@ -71,10 +72,28 @@ def test_jobs_keep_only_startable_node_actions_for_the_wanted_items(
     skilled = Villager("b", "B", Coord(0, 0), skills={"carving": 5.0, "woodcutting": 50.0})
     state = make_world(ROWS, [plain, skilled])
     view = view_of(custom, state)
-    assert ids(rules.jobs(view, plain, ["wood"])) == ["chop", "log"]
-    assert ids(rules.jobs(view, skilled, ["wood"])) == ["a_skill1", "a_skill5", "chop", "log"]
+    assert ids(rules.jobs(view, plain, ["wood"])) == ["a_frozen", "chop", "log"]
+    assert ids(rules.jobs(view, skilled, ["wood"])) == [
+        "a_frozen",
+        "a_skill1",
+        "a_skill5",
+        "chop",
+        "log",
+    ]
     assert ids(rules.jobs(view, plain, ["berries"])) == ["a_berry", "pick"]
+    both = ids(rules.jobs(view, skilled, ["plank", "wood"]))  # carve (no node) sorts before chop
+    assert both == ["a_frozen", "a_skill1", "a_skill5", "chop", "log"]
     assert ids(rules.jobs(view, skilled, ["plank"])) == ["log"]  # not carve, tinker, nail, ...
+
+
+def test_jobs_skip_actions_with_a_tag_blocked_this_season(
+    custom: Registry, make_world: MakeWorld
+) -> None:
+    """AC1: in winter sowing is blocked; the other actions after it are still found."""
+    a = Villager("a", "A", Coord(0, 0))
+    state = make_world(ROWS, [a])
+    state.tick = 31 * 1440  # day 31: winter in the default calendar
+    assert ids(rules.jobs(view_of(custom, state), a, ["wood"])) == ["chop", "log"]
 
 
 def test_skill_score_is_one_plus_the_weighted_skill_share(
