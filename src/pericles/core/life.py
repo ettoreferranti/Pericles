@@ -85,12 +85,24 @@ def update_needs(ctx: Context, state: WorldState, sink: EventSink) -> list[tuple
     config = ctx.config
     needs = [ctx.registry.needs[k] for k in sorted(ctx.registry.needs)]
     sleep_needs = [n.id for n in needs if n.relief == SLEEP]
-    damage_per_tick = {n.id: per_tick(ctx, n.damage_per_hour) for n in needs}
     regen = per_tick(ctx, config.health_regen_per_hour)
     home_sleep = -config.sleep_relief_per_hour * config.home_sleep_multiplier
     away_sleep = -config.sleep_relief_per_hour
     shelter = -config.shelter_relief_per_hour
     tick_minutes = config.calendar.tick_minutes
+    # (need, id, sleep relief?, shelter relief?, critical, damage per tick or None, cause)
+    rows = [
+        (
+            n,
+            n.id,
+            n.relief == SLEEP,
+            n.relief == "shelter",
+            n.critical,
+            per_tick(ctx, n.damage_per_hour) if n.damage_per_hour > 0 else None,
+            n.death_cause,
+        )
+        for n in needs
+    ]
     dying: list[tuple[str, str]] = []
     rate = rate_table(ctx, state)
     for vid in sorted(state.villagers):
@@ -100,25 +112,26 @@ def update_needs(ctx: Context, state: WorldState, sink: EventSink) -> list[tuple
         levels = villager.needs
         damage = 0.0
         causes: list[str] = []
-        for need in needs:
-            if need.relief == SLEEP and asleep:
+        for need, nid, by_sleep, by_shelter, critical, harm, cause in rows:
+            if by_sleep and asleep:
                 hourly = home_sleep if home else away_sleep
-            elif need.relief == "shelter" and home:
+            elif by_shelter and home:
                 hourly = shelter
             else:
                 hourly = rate(villager, need)
-            before = levels.get(need.id, 0.0)
-            change = hourly * tick_minutes / MINUTES_PER_HOUR
-            level = min(need.critical, max(0.0, before + change))
-            levels[need.id] = level
-            if level < need.critical:
+            before = levels.get(nid, 0.0)
+            level = before + hourly * tick_minutes / MINUTES_PER_HOUR
+            level = level if level > 0.0 else 0.0  # max(0.0, level), without the call
+            level = level if level < critical else critical  # min(critical, level)
+            levels[nid] = level
+            if level < critical:
                 continue
-            if before < need.critical:
-                sink.emit("need_critical", actor=vid, need=need.id)
-            if need.damage_per_hour > 0:
-                assert need.death_cause is not None  # registry rule (ADR-0015 §2)
-                damage += damage_per_tick[need.id]
-                causes.append(need.death_cause)
+            if before < critical:
+                sink.emit("need_critical", actor=vid, need=nid)
+            if harm is not None:
+                assert cause is not None  # registry rule (ADR-0015 §2)
+                damage += harm
+                causes.append(cause)
         if causes:
             villager.damage += damage
         else:

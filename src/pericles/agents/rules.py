@@ -197,10 +197,19 @@ def utility(
     return best * skill_score(view, villager, action)
 
 
+def demands(view: View, villager: Villager) -> dict[str, float]:
+    """`demand` of every item, by id. It depends on the villager only through
+    `food_demand`, so villagers seeing the same food demand share one table a tick."""
+    return view.memo(
+        ("demands", view.food_demand(villager)),
+        lambda: {item: demand(view, villager, item) for item in sorted(view.ctx.registry.items)},
+    )
+
+
 def work(view: View, villager: Villager) -> Decision | None:
-    demands = {item: demand(view, villager, item) for item in sorted(view.ctx.registry.items)}
-    wanted = [item for item, level in demands.items() if level > 0]
-    scored = [(utility(view, villager, a, demands), a) for a in jobs(view, villager, wanted)]
+    wants = demands(view, villager)
+    wanted = [item for item, level in wants.items() if level > 0]
+    scored = [(utility(view, villager, a, wants), a) for a in jobs(view, villager, wanted)]
     ranked = [a for score, a in sorted(scored, key=lambda p: (-p[0], p[1].id)) if score > 0]
     return first_reachable(view, villager, ranked)
 

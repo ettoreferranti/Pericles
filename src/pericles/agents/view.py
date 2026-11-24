@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 from collections import Counter
-from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
+from collections.abc import Callable, Hashable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, TypeVar, cast
 
 from pericles.agents.config import RELIEFS, AgentConfig
 from pericles.core.buildings import Building, building_tiles, footprint, near, remaining_cost
@@ -19,6 +19,7 @@ from pericles.core.nodes import Node
 from pericles.core.state import Villager, WorldState
 
 PLACE = "place:"
+T = TypeVar("T")
 CONSTRUCT = "construct"
 
 
@@ -94,7 +95,8 @@ class NodeIndex:
         cells = self._cells.get(kind)
         if not cells:
             return None
-        cx, cy = origin.x // self.cell, origin.y // self.cell
+        ox, oy = origin
+        cx, cy = ox // self.cell, oy // self.cell
         best: Node | None = None
         best_key: tuple[int, str] | None = None
         rings = self._occupied_rings(kind, cx, cy, radius // self.cell + 1 + 1)
@@ -103,7 +105,8 @@ class NodeIndex:
                 break
             for key in keys:
                 for node in cells[key]:
-                    distance = origin.manhattan(node.pos)
+                    pos = node.pos
+                    distance = abs(ox - pos.x) + abs(oy - pos.y)  # origin.manhattan(pos)
                     if distance > radius or not accept(node):
                         continue
                     candidate = (distance, node.id)
@@ -187,6 +190,7 @@ class View:
         self._center: Coord | None = None
         self._food: dict[str, float] = {}
         self._food_demand: dict[str, float] = {}
+        self._memo: dict[Hashable, object] = {}
         self._jobs: Counter[str] | None = None
         self._targets: Counter[tuple[str | None, str]] | None = None
         self._producing: dict[str, frozenset[str]] = {}
@@ -356,6 +360,12 @@ class View:
             )
         self._food[villager.id] = self._stored[key]
         return self._stored[key]
+
+    def memo(self, key: Hashable, compute: Callable[[], T]) -> T:
+        """`compute()` once a tick per `key`; the key must name everything it depends on."""
+        if key not in self._memo:
+            self._memo[key] = compute()
+        return cast(T, self._memo[key])
 
     def food_demand(self, villager: Villager) -> float:
         """How much `villager` sees food wanted, 0..1: the shortfall of `stored_food` against
