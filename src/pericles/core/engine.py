@@ -64,6 +64,8 @@ class Engine:
         self._cache: tuple[TileMap, tuple[tuple[str, str, Coord], ...], TerrainCostField] | None = (
             None  # pragma: no mutate - cache sentinel; any non-matching value just forces a rebuild
         )
+        self._path_scope: tuple[TerrainCostField, int] | None = None
+        self._paths: dict[tuple[Coord, Coord], list[Coord] | None] = {}
 
     def register(self, intent_type: type[Intent], handler: Handler) -> None:
         self._handlers[intent_type] = handler
@@ -152,10 +154,27 @@ class Engine:
         self._cache = (state.tilemap, layout, field)
         return field
 
+    def _path(self, state: WorldState, start: Coord, goal: Coord) -> list[Coord] | None:
+        """`find_path` on the current cost field, remembered for the rest of the day.
+
+        A path depends only on the field, start and goal, so a remembered one is the same
+        path; starting afresh each day and with each new field bounds what is kept. Callers
+        must not change the returned list."""
+        field = self._cost_field(state)
+        day = state.tick // self.config.calendar.ticks_per_day
+        scope = self._path_scope
+        if scope is None or scope[0] is not field or scope[1] != day:
+            self._path_scope = (field, day)
+            self._paths = {}
+        key = (start, goal)
+        if key not in self._paths:
+            self._paths[key] = find_path(field, start, goal)
+        return self._paths[key]
+
     def _move_to(self, state: WorldState, intent: Intent, sink: EventSink) -> None:
         assert isinstance(intent, MoveTo)
         villager = state.villagers[intent.actor]
-        path = find_path(self._cost_field(state), villager.pos, intent.target)
+        path = self._path(state, villager.pos, intent.target)
         villager.move_progress = 0.0
         if path is None:
             villager.path = []

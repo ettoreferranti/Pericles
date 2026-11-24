@@ -180,8 +180,7 @@ def demand(view: View, villager: Villager, item: str) -> float:
     pockets does not count.
     """
     if view.ctx.registry.items[item].nutrition > 0:
-        target = view.food_target()
-        return 0.0 if target <= 0 else max(0.0, target - view.stored_food(villager)) / target
+        return view.food_demand(villager)
     return 1.0 if view.needed()[item] > 0 else 0.0
 
 

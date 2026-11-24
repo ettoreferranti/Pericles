@@ -186,7 +186,9 @@ class View:
         self._storage_shortfall: float | None = None
         self._center: Coord | None = None
         self._food: dict[str, float] = {}
+        self._food_demand: dict[str, float] = {}
         self._jobs: Counter[str] | None = None
+        self._targets: Counter[tuple[str | None, str]] | None = None
         self._producing: dict[str, frozenset[str]] = {}
         self._houses: list[tuple[Building, int]] | None = None
         self._family: dict[tuple[str, str], Building | None] = {}
@@ -207,7 +209,10 @@ class View:
         """True if any relief's `level` is at or past its `urgent_at`. A relief no need
         uses has level 0, below every `urgent_at` (levels are positive, `AgentConfig`)."""
         needs = villager.needs
-        return any(needs.get(need, 0.0) >= at for need, at in self._urgent)
+        for need, at in self._urgent:  # noqa: SIM110 - a loop beats a generator here
+            if needs.get(need, 0.0) >= at:
+                return True
+        return False
 
     def avoided(self, villager: Villager, target: str) -> bool:
         memory = self.memory.get(villager.id)
@@ -352,17 +357,38 @@ class View:
         self._food[villager.id] = self._stored[key]
         return self._stored[key]
 
+    def food_demand(self, villager: Villager) -> float:
+        """How much `villager` sees food wanted, 0..1: the shortfall of `stored_food` against
+        `food_target`, as a share of the target (ADR-0016 §4, amended)."""
+        known = self._food_demand.get(villager.id)
+        if known is None:
+            target = self.food_target()
+            known = 0.0 if target <= 0 else max(0.0, target - self.stored_food(villager)) / target
+            self._food_demand[villager.id] = known
+        return known
+
     def food_target(self) -> float:
         return self.config.food_reserve_per_capita * self.population()
 
     def _job_counts(self) -> Counter[str]:
         """Living villagers per remembered job; kept current by `remember`."""
         if self._jobs is None:
-            villagers = self.state.villagers
-            self._jobs = Counter(
-                m.job for vid, m in self.memory.items() if m.job is not None and vid in villagers
-            )
+            self._count_memory()
+        assert self._jobs is not None
         return self._jobs
+
+    def _target_counts(self) -> Counter[tuple[str | None, str]]:
+        """Living villagers per remembered (job, target); kept current by `remember`."""
+        if self._targets is None:
+            self._count_memory()
+        assert self._targets is not None
+        return self._targets
+
+    def _count_memory(self) -> None:
+        villagers = self.state.villagers
+        living = [m for vid, m in self.memory.items() if vid in villagers]
+        self._jobs = Counter(m.job for m in living if m.job is not None)
+        self._targets = Counter((m.job, m.target) for m in living if m.target is not None)
 
     def _producers(self, item: str) -> frozenset[str]:
         """The actions with `item` among their outputs."""
@@ -375,12 +401,30 @@ class View:
 
     def remember(self, vid: str, memory: Memory, target: str | None, job: str | None) -> None:
         """Record a decision's target and job in `memory` (minds' one write while deciding)."""
-        if self._jobs is not None and vid in self.state.villagers:
-            if memory.job is not None:
-                self._jobs[memory.job] -= 1
-            if job is not None:
-                self._jobs[job] += 1
+        if vid in self.state.villagers:
+            if self._jobs is not None:
+                if memory.job is not None:
+                    self._jobs[memory.job] -= 1
+                if job is not None:
+                    self._jobs[job] += 1
+            if self._targets is not None:
+                if memory.target is not None:
+                    self._targets[(memory.job, memory.target)] -= 1
+                if target is not None:
+                    self._targets[(job, target)] += 1
         memory.target, memory.job = target, job
+
+    def _others(self, job: str | None, target: str, exclude: str) -> int:
+        """Living villagers other than `exclude` remembering (job, target)."""
+        total = self._target_counts()[(job, target)]
+        mine = self.memory.get(exclude)
+        if (
+            mine is not None
+            and (mine.job, mine.target) == (job, target)
+            and exclude in self.state.villagers
+        ):
+            total -= 1
+        return total
 
     def workers(self, item: str, exclude: str) -> int:
         """Living villagers other than `exclude` whose remembered job produces `item`."""
@@ -393,20 +437,16 @@ class View:
         return total
 
     def builders(self, site_id: str, exclude: str) -> int:
-        return sum(
-            1
-            for vid, memory in self.memory.items()
-            if vid != exclude
-            and memory.job == CONSTRUCT
-            and memory.target == site_id
-            and vid in self.state.villagers
-        )
+        return self._others(CONSTRUCT, site_id, exclude)
 
     def placing(self, kind: str, exclude: str) -> bool:
+        """True if another living villager has claimed a site for `kind` (no job, as `build`
+        decides a placement)."""
         claim = PLACE + kind
         return any(
-            vid != exclude and memory.target == claim and vid in self.state.villagers
-            for vid, memory in self.memory.items()
+            self._others(job, claim, exclude) > 0
+            for job, target in self._target_counts()
+            if target == claim
         )
 
     def house_for(self, villager: Villager) -> Building | None:
