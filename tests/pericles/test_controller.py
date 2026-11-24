@@ -9,7 +9,7 @@ from pericles.core.content.registry import Registry
 from pericles.core.context import Context
 from pericles.core.events import Event
 from pericles.core.geometry import Coord
-from pericles.core.intents import MoveTo, Sleep, StartAction, Wait
+from pericles.core.intents import Construct, MoveTo, Sleep, StartAction, Wait
 from pericles.core.state import Activity, Villager, WorldState
 from pericles.experiment.defaults import default_config
 
@@ -208,3 +208,111 @@ def test_memory_round_trips_and_forgets_the_dead(registry: Registry, make_world:
     del state.villagers["b"]
     ctl.intents(state)
     assert set(ctl.memory) == {"a"}
+
+
+@pytest.mark.req("REQ-AGT-008")
+def test_redundancy_matches_the_whole_intent(registry: Registry, make_world: MakeWorld) -> None:
+    """AC1: only an identical move, build or sleep is dropped; anything else is sent."""
+    hungry = {"hunger": AgentConfig().urgent_at["eat"]}
+    building = Activity("construction", "house", "h1", 30.0, 0.0, 1.0)
+    state = make_world(
+        ROWS,
+        [
+            Villager(
+                "a", "A", Coord(0, 0), path=[Coord(1, 0), Coord(2, 0), GOAL], needs=dict(hungry)
+            ),
+            Villager(
+                "b", "B", Coord(0, 0), path=[Coord(1, 0), Coord(2, 0), GOAL], needs=dict(hungry)
+            ),
+            Villager("c", "C", Coord(0, 0), activity=building, needs=dict(hungry)),
+            Villager("d", "D", Coord(0, 0), activity=building, needs=dict(hungry)),
+            Villager("e", "E", Coord(0, 0), activity=gathering(), needs=dict(hungry)),
+            Villager(
+                "f",
+                "F",
+                Coord(0, 0),
+                activity=Activity("construction", "house", "h2", 30.0, 0.0, 1.0),
+                needs=dict(hungry),
+            ),
+            Villager("g", "G", Coord(0, 0), activity=gathering(), needs=dict(hungry)),
+        ],
+    )
+    answers = {
+        "a": Decision(MoveTo("a", GOAL)),
+        "b": Decision(MoveTo("b", Coord(2, 0))),
+        "c": Decision(Construct("c", "h1")),
+        "d": Decision(Construct("d", "h9")),
+        "e": Decision(Construct("e", "h1")),
+        "f": Decision(Construct("f", "h1")),
+        "g": Decision(Wait("g")),
+    }
+    ctl = controller(registry, Script(lambda v: answers[v.id]))
+    assert ctl.intents(state) == [
+        MoveTo("b", Coord(2, 0)),
+        Construct("d", "h9"),
+        Construct("e", "h1"),
+        Construct("f", "h1"),
+    ]
+    assert ctl.memory["g"].idle_until == AgentConfig().idle_ticks
+
+
+@pytest.mark.req("REQ-AGT-008")
+def test_every_mind_gets_a_real_view(registry: Registry, make_world: MakeWorld) -> None:
+    """AC1: all minds see this controller's config and memory; the node index is cached per node set."""
+    seen: list[View] = []
+
+    class Spy:
+        def decide(self, view: View, villager: Villager) -> Decision | None:
+            seen.append(view)
+            return None
+
+    state = make_world(
+        ROWS,
+        [
+            Villager("a", "A", Coord(0, 0), model="m"),
+            Villager("b", "B", Coord(0, 0)),
+            Villager("c", "C", Coord(0, 0), model="broken"),
+            Villager("k", "K", Coord(0, 0), adult=False),
+        ],
+    )
+    ctl = controller(registry, Spy(), Spy(), minds={"m": Spy(), "broken": Broken()})
+    ctl.intents(state)
+    assert len(seen) == 4
+    for view in seen:
+        assert view.config is ctl.config and view.memory is ctl.memory
+        assert view.state is state and view.index.cell == ctl.config.index_cell
+    first = seen[0].index
+    ctl.intents(state)
+    assert seen[4].index is first
+    state.nodes = dict(state.nodes)
+    ctl.intents(state)
+    assert seen[8].index is not first
+
+
+@pytest.mark.req("REQ-AGT-008")
+def test_every_failure_counts_and_later_villagers_are_still_handled(
+    registry: Registry, make_world: MakeWorld
+) -> None:
+    """AC2: each fallback is counted; one villager's wait or odd event does not stop the rest."""
+    state = make_world(
+        ROWS,
+        [
+            Villager("a", "A", Coord(0, 0), model="broken"),
+            Villager("b", "B", Coord(0, 0), model="broken"),
+        ],
+    )
+    ctl = controller(registry, Script(lambda v: Decision(Wait(v.id))), minds={"broken": Broken()})
+    assert ctl.intents(state) == []
+    assert ctl.fallbacks == 2
+    assert [ctl.memory[v].idle_until for v in "ab"] == [AgentConfig().idle_ticks] * 2
+
+    state.tick = 5
+    ctl.observe(
+        state,
+        [
+            Event(0, 0, "tick", {"actor": "a"}),
+            Event(0, 1, "intent_rejected", {"actor": "zz"}),
+            Event(0, 2, "move_failed", {"actor": "a"}),
+        ],
+    )
+    assert ctl.memory["a"].idle_until == state.tick + AgentConfig().idle_ticks
