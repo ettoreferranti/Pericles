@@ -3,6 +3,7 @@ from collections.abc import Callable
 
 import pytest
 
+from pericles.agents import rules
 from pericles.agents.config import AgentConfig
 from pericles.agents.controller import Controller
 from pericles.agents.scripted import ScriptedMind
@@ -32,6 +33,17 @@ def decide(
         ctx, state, CONFIG, NodeIndex(state.nodes.values(), CONFIG.index_cell), memory or {}
     )
     return ScriptedMind().decide(view, state.villagers[vid])
+
+
+def shelter_decision(
+    registry: Registry, state: WorldState, vid: str = "a", memory: dict[str, Memory] | None = None
+) -> Decision | None:
+    """What the shelter rule alone says, so tests tell it apart from the wait fallback."""
+    ctx = Context.build(registry, default_config())
+    view = View(
+        ctx, state, CONFIG, NodeIndex(state.nodes.values(), CONFIG.index_cell), memory or {}
+    )
+    return rules.shelter(view, state.villagers[vid])
 
 
 def store(
@@ -124,13 +136,14 @@ def test_cold_villagers_go_home_and_stay_until_warm(
     decision = decide(registry, state)
     assert isinstance(decision.intent, MoveTo) and decision.target == "h0"
     a.pos = Coord(5, 6)
-    a.needs["cold"] = CONFIG.warm_until + 1
     assert decide(registry, state).intent == Wait("a")
+    a.needs["cold"] = CONFIG.warm_until + 1
+    assert shelter_decision(registry, state) == Decision(Wait("a"))  # shelter, not the fallback
     a.needs["cold"] = CONFIG.warm_until
-    assert decide(registry, state).intent == Wait("a")  # nothing else to do; but not for shelter
+    assert shelter_decision(registry, state) is None  # warm: nothing else to do, but not for it
     a.home = None
     a.needs["cold"] = COLD_AT
-    assert decide(registry, state).intent == Wait("a")
+    assert shelter_decision(registry, state) is None
 
 
 def test_a_scripted_villager_stays_alive(registry: Registry, make_world: MakeWorld) -> None:
@@ -206,9 +219,9 @@ def test_a_warm_villager_at_home_does_not_stay(registry: Registry, make_world: M
     state.buildings["h0"] = Building(
         "h0", "house", Coord(6, 6), Ownership("communal"), complete=True
     )
-    assert decide(registry, state).intent == Wait("a")
+    assert shelter_decision(registry, state) is None
     a.needs["cold"] = CONFIG.warm_until + 1
-    assert decide(registry, state).intent == Wait("a")
+    assert shelter_decision(registry, state) == Decision(Wait("a"))
     a.needs["cold"] = CONFIG.warm_until
     a.needs["fatigue"] = SLEEP_AT
     assert decide(registry, state).intent == Sleep("a")

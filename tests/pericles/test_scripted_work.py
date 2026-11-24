@@ -12,7 +12,7 @@ from pericles.core.content.registry import Registry
 from pericles.core.context import Context
 from pericles.core.engine import Engine
 from pericles.core.geometry import Coord
-from pericles.core.intents import Deliver, Deposit, MoveTo, StartAction, Wait
+from pericles.core.intents import Deliver, Deposit, MoveTo, Wait
 from pericles.core.nodes import Node
 from pericles.core.state import Villager, WorldState
 from pericles.experiment.defaults import default_config
@@ -33,12 +33,15 @@ def view_of(
     )
 
 
-def site(state: WorldState, kind: str = "house", at: Coord = Coord(1, 8)) -> Building:
+SITE_AT, STORE_AT = Coord(1, 8), Coord(1, 1)
+
+
+def site(state: WorldState, kind: str = "house", at: Coord = SITE_AT) -> Building:
     state.buildings["s1"] = Building("s1", kind, at, Ownership("communal"))
     return state.buildings["s1"]
 
 
-def storehouse(state: WorldState, at: Coord = Coord(1, 1)) -> Building:
+def storehouse(state: WorldState, at: Coord = STORE_AT) -> Building:
     state.buildings["st"] = Building("st", "storehouse", at, Ownership("communal"), complete=True)
     return state.buildings["st"]
 
