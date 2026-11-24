@@ -36,6 +36,7 @@ class TerrainCostField:
         walkable = [c for c in self._costs if c is not None]
         self.min_cost = min(walkable) if walkable else 1.0
         self._blocked = blocked
+        self._keyed: list[float | None] | None = None
 
     def cost(self, c: Coord) -> float | None:
         if not (0 <= c.x < self.width and 0 <= c.y < self.height):
@@ -43,6 +44,30 @@ class TerrainCostField:
         if self._blocked is not None and self._blocked(c):
             return None
         return self._costs[c.y * self.width + c.x]
+
+    def keyed_costs(self) -> list[float | None]:
+        """`cost` of every tile, indexed `x * height + y` (as `find_path` keys tiles)."""
+        if self._keyed is None:
+            self._keyed = keyed_costs(self)
+        return self._keyed
+
+
+def keyed_costs(field: CostField) -> list[float | None]:
+    """`field.cost` of every tile, indexed `x * height + y`."""
+    return [field.cost(Coord(x, y)) for x in range(field.width) for y in range(field.height)]
+
+
+class _AskedCosts(dict[int, float | None]):
+    """`field.cost` by tile key, asked once per tile on first use."""
+
+    def __init__(self, field: CostField) -> None:
+        super().__init__()
+        self.field = field
+
+    def __missing__(self, key: int) -> float | None:
+        x, y = divmod(key, self.field.height)
+        value = self[key] = self.field.cost(Coord(x, y))
+        return value
 
 
 def _in_bounds(field: CostField, c: Coord) -> bool:
@@ -53,7 +78,8 @@ def find_path(field: CostField, start: Coord, goal: Coord) -> list[Coord] | None
     """A* over 4-neighbours; ties break on (f, h, tile) with tiles ordered as `Coord` (x, y).
 
     Tiles are keyed `x * height + y`, which orders exactly as `Coord`; neighbours off the map
-    are skipped (a cost field is impassable there). Each tile's cost is asked once.
+    are skipped (a cost field is impassable there). A `TerrainCostField` lists its costs once
+    (`keyed_costs`); any other field is asked once per tile it reaches.
     """
     if not (_in_bounds(field, start) and _in_bounds(field, goal)):
         return None
@@ -65,7 +91,9 @@ def find_path(field: CostField, start: Coord, goal: Coord) -> list[Coord] | None
     gx, gy = goal
     target = gx * height + gy
     origin = start.x * height + start.y
-    costs: dict[int, float | None] = {}
+    costs: list[float | None] | _AskedCosts = (
+        field.keyed_costs() if isinstance(field, TerrainCostField) else _AskedCosts(field)
+    )
     best: dict[int, float] = {origin: 0.0}
     came_from: dict[int, int] = {}
     closed: set[int] = set()
@@ -89,10 +117,7 @@ def find_path(field: CostField, start: Coord, goal: Coord) -> list[Coord] | None
             nb = nx * height + ny
             if nb in closed:
                 continue
-            if nb in costs:
-                step = costs[nb]
-            else:
-                step = costs[nb] = field.cost(Coord(nx, ny))
+            step = costs[nb]
             if step is None:
                 continue
             cost = here + step

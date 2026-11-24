@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import math
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 
 from pericles.agents.view import CONSTRUCT, PLACE, Decision, View
 from pericles.core.buildings import footprint, remaining_cost
@@ -124,10 +124,11 @@ def feed(view: View, villager: Villager) -> Decision | None:
             return Decision(
                 Eat(villager.id, food, min(have, math.ceil(level / items[food].nutrition)))
             )
+    portions = {food: portion(view, villager, food) for food in view.foods}
     for building in view.stores(villager):
         for food in view.foods:
             held = building.storage.count(food)
-            qty = min(held, portion(view, villager, food))
+            qty = min(held, portions[food])
             if qty <= 0:
                 continue
             step = view.go(villager, view.tiles(building))
@@ -184,17 +185,23 @@ def demand(view: View, villager: Villager, item: str) -> float:
     return 1.0 if view.needed()[item] > 0 else 0.0
 
 
-def utility(view: View, villager: Villager, action: ActionDef) -> float:
-    best = max(
-        demand(view, villager, item) / (1 + view.workers(item, villager.id))
-        for item in action.outputs
-    )
+def utility(
+    view: View, villager: Villager, action: ActionDef, demands: Mapping[str, float] | None = None
+) -> float:
+    """Best output demand, shared among its workers, times skill; `demands` may hold the
+    villager's `demand` per item already."""
+
+    def wants(item: str) -> float:
+        return demands[item] if demands is not None else demand(view, villager, item)
+
+    best = max(wants(item) / (1 + view.workers(item, villager.id)) for item in action.outputs)
     return best * skill_score(view, villager, action)
 
 
 def work(view: View, villager: Villager) -> Decision | None:
-    wanted = [item for item in sorted(view.ctx.registry.items) if demand(view, villager, item) > 0]
-    scored = [(utility(view, villager, a), a) for a in jobs(view, villager, wanted)]
+    demands = {item: demand(view, villager, item) for item in sorted(view.ctx.registry.items)}
+    wanted = [item for item, level in demands.items() if level > 0]
+    scored = [(utility(view, villager, a, demands), a) for a in jobs(view, villager, wanted)]
     ranked = [a for score, a in sorted(scored, key=lambda p: (-p[0], p[1].id)) if score > 0]
     return first_reachable(view, villager, ranked)
 

@@ -74,11 +74,15 @@ def _ring(cx: int, cy: int, r: int) -> Iterator[tuple[int, int]]:
         yield (cx + r, cy + dy)
 
 
+Rings = tuple[tuple[tuple[int, int], ...], ...]
+
+
 class NodeIndex:
     """Nodes bucketed by kind and grid cell; nodes never move (ADR-0016 §3)."""
 
     def __init__(self, nodes: Iterable[Node], cell: int) -> None:
         self.cell = cell
+        self._rings: dict[tuple[str, int, int, int], Rings] = {}
         self._cells: dict[str, dict[tuple[int, int], list[Node]]] = {}
         for node in sorted(nodes, key=lambda n: n.id):
             bucket = self._cells.setdefault(node.kind, {})
@@ -93,11 +97,12 @@ class NodeIndex:
         cx, cy = origin.x // self.cell, origin.y // self.cell
         best: Node | None = None
         best_key: tuple[int, str] | None = None
-        for ring in range(radius // self.cell + 1 + 1):
+        rings = self._occupied_rings(kind, cx, cy, radius // self.cell + 1 + 1)
+        for ring, keys in enumerate(rings):
             if best_key is not None and (ring - 1) * self.cell >= best_key[0]:
                 break
-            for key in _ring(cx, cy, ring):
-                for node in cells.get(key, ()):
+            for key in keys:
+                for node in cells[key]:
                     distance = origin.manhattan(node.pos)
                     if distance > radius or not accept(node):
                         continue
@@ -105,6 +110,19 @@ class NodeIndex:
                     if best_key is None or candidate < best_key:
                         best, best_key = node, candidate
         return best
+
+    def _occupied_rings(self, kind: str, cx: int, cy: int, count: int) -> Rings:
+        """For rings 0..count-1 around cell (cx, cy): the cells of `kind` holding nodes, in
+        `_ring` order. Nodes never move, so this is kept per kind, cell and ring count."""
+        key = (kind, cx, cy, count)
+        rings = self._rings.get(key)
+        if rings is None:
+            cells = self._cells[kind]
+            rings = tuple(
+                tuple(c for c in _ring(cx, cy, ring) if c in cells) for ring in range(count)
+            )
+            self._rings[key] = rings
+        return rings
 
 
 class OriginCache:
@@ -170,7 +188,7 @@ class View:
         self._food: dict[str, float] = {}
         self._jobs: Counter[str] | None = None
         self._producing: dict[str, frozenset[str]] = {}
-        self._houses: list[Building] | None = None
+        self._houses: list[tuple[Building, int]] | None = None
         self._family: dict[tuple[str, str], Building | None] = {}
         self._urgent = [
             (need, config.urgent_at[relief])
@@ -271,10 +289,13 @@ class View:
         minds decide: only `Controller.observe` changes it)."""
         usable = self._usable.get(villager.id)
         if usable is None:
+            memory = self.memory.get(villager.id)
+            avoid = memory.avoid if memory is not None else {}
+            tick = self.state.tick
             usable = [
                 b
                 for b in self._storehouses()
-                if b.ownership.owned_by(villager.id) and not self.avoided(villager, b.id)
+                if b.ownership.owned_by(villager.id) and avoid.get(b.id, tick) <= tick
             ]
             self._usable[villager.id] = usable
         return usable
@@ -437,24 +458,28 @@ class View:
             return None
         pair = (min(villager.id, partner.id), max(villager.id, partner.id))
         if pair not in self._family:
+            # Neither partner lives in the candidate, so `_fits_pair` reduces to free beds.
             homes = {villager.home, partner.home}
+            beds = beds_needed(villager) + beds_needed(partner) + 1
             options = sorted(
                 (
                     b
-                    for b in self._housing()
-                    if b.id not in homes and self._fits_pair(b, villager, partner)
+                    for b, free in self._free_beds()
+                    if free >= beds
+                    and b.id not in homes
+                    and (b.ownership.owned_by(villager.id) or b.ownership.owned_by(partner.id))
                 ),
                 key=self._pair_rank(villager, partner),
             )
             self._family[pair] = options[0] if options else None
         return self._family[pair]
 
-    def _housing(self) -> list[Building]:
-        """Complete buildings with beds, in building order: the only ones a pair fits."""
+    def _free_beds(self) -> list[tuple[Building, int]]:
+        """Complete buildings with beds, in building order, with their beds not taken."""
         if self._houses is None:
             registry = self.ctx.registry
             self._houses = [
-                b
+                (b, registry.buildings[b.kind].housing - self.occupants(b.id))
                 for b in self.state.buildings.values()
                 if b.complete and registry.buildings[b.kind].housing > 0
             ]

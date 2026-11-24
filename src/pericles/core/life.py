@@ -76,52 +76,56 @@ def sleeping(villager: Villager) -> bool:
     return villager.activity is not None and villager.activity.kind == SLEEP
 
 
-def _hourly_change(
-    ctx: Context, rate: RateTable, villager: Villager, need: NeedDef, home: bool
-) -> float:
-    config = ctx.config
-    if need.relief == "sleep" and sleeping(villager):
-        boost = config.home_sleep_multiplier if home else 1.0
-        return -config.sleep_relief_per_hour * boost
-    if need.relief == "shelter" and home:
-        return -config.shelter_relief_per_hour
-    return rate(villager, need)
-
-
 def update_needs(ctx: Context, state: WorldState, sink: EventSink) -> list[tuple[str, str]]:
-    """Advance every villager's needs and health; return (villager, cause) for the dying."""
+    """Advance every villager's needs and health; return (villager, cause) for the dying.
+
+    Per need and tick: sleep relieves a sleeper's sleep need (boosted at home), shelter
+    relieves a villager at home, and otherwise the need grows at its modified rate.
+    """
     config = ctx.config
     needs = [ctx.registry.needs[k] for k in sorted(ctx.registry.needs)]
+    sleep_needs = [n.id for n in needs if n.relief == SLEEP]
+    damage_per_tick = {n.id: per_tick(ctx, n.damage_per_hour) for n in needs}
+    regen = per_tick(ctx, config.health_regen_per_hour)
+    home_sleep = -config.sleep_relief_per_hour * config.home_sleep_multiplier
+    away_sleep = -config.sleep_relief_per_hour
+    shelter = -config.shelter_relief_per_hour
+    tick_minutes = config.calendar.tick_minutes
     dying: list[tuple[str, str]] = []
     rate = rate_table(ctx, state)
     for vid in sorted(state.villagers):
         villager = state.villagers[vid]
         home = at_home(ctx, state, villager)
+        asleep = sleeping(villager)
+        levels = villager.needs
         damage = 0.0
         causes: list[str] = []
         for need in needs:
-            before = villager.needs.get(need.id, 0.0)
-            change = per_tick(ctx, _hourly_change(ctx, rate, villager, need, home))
+            if need.relief == SLEEP and asleep:
+                hourly = home_sleep if home else away_sleep
+            elif need.relief == "shelter" and home:
+                hourly = shelter
+            else:
+                hourly = rate(villager, need)
+            before = levels.get(need.id, 0.0)
+            change = hourly * tick_minutes / MINUTES_PER_HOUR
             level = min(need.critical, max(0.0, before + change))
-            villager.needs[need.id] = level
+            levels[need.id] = level
             if level < need.critical:
                 continue
             if before < need.critical:
                 sink.emit("need_critical", actor=vid, need=need.id)
             if need.damage_per_hour > 0:
                 assert need.death_cause is not None  # registry rule (ADR-0015 §2)
-                damage += per_tick(ctx, need.damage_per_hour)
+                damage += damage_per_tick[need.id]
                 causes.append(need.death_cause)
         if causes:
             villager.damage += damage
         else:
-            regen = per_tick(ctx, config.health_regen_per_hour)
             villager.damage = max(0.0, villager.damage - regen)
         if causes and villager.damage >= config.max_health:
             dying.append((vid, causes[0]))
-        elif sleeping(villager) and all(
-            villager.needs[n.id] <= 0 for n in needs if n.relief == SLEEP
-        ):
+        elif asleep and all(levels[n] <= 0 for n in sleep_needs):
             villager.activity = None
             sink.emit("woke", actor=vid)
     return dying

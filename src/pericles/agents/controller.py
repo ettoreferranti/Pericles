@@ -87,7 +87,9 @@ class Controller:
         intents: list[Intent] = []
         for vid in sorted(state.villagers):
             villager = state.villagers[vid]
-            memory = self.memory.setdefault(vid, Memory())
+            memory = self.memory.get(vid)
+            if memory is None:
+                memory = self.memory[vid] = Memory()
             if not self._due(view, villager, memory):
                 continue
             decision = self._decide(view, villager)
@@ -106,9 +108,9 @@ class Controller:
     def _due(self, view: View, villager: Villager, memory: Memory) -> bool:
         if view.tick < memory.idle_until:
             return False
-        if view.urgent(villager):
+        if not villager.path and villager.activity is None:
             return True
-        return not villager.path and villager.activity is None
+        return view.urgent(villager)
 
     def _decide(self, view: View, villager: Villager) -> Decision | None:
         if not villager.adult:
