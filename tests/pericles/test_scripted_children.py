@@ -2,6 +2,7 @@ from collections.abc import Callable
 
 import pytest
 
+from pericles.agents import rules
 from pericles.agents.config import AgentConfig
 from pericles.agents.scripted import ChildMind, ScriptedMind, scripted_controller
 from pericles.agents.view import Decision, Memory, NodeIndex, View
@@ -112,3 +113,59 @@ def test_a_family_runs_without_child_rejections(registry: Registry, make_world: 
                 started.add(e.data["ident"])
     assert "k" in state.villagers
     assert started and all("light" in registry.actions[a].tags for a in started)
+
+
+@pytest.mark.req("REQ-SIM-016")
+def test_a_child_forages_around_its_parent_not_itself(
+    registry: Registry, make_world: MakeWorld
+) -> None:
+    """AC1: the forage radius is centred on the parent when there is one."""
+    bush = Node("b0", "berry_bush", Coord(2, 5), 20)
+    state = make_world(ROWS, family(Coord(5, 2)), [bush])
+    decision = decide(registry, state)
+    assert isinstance(decision.intent, MoveTo) and decision.target == "b0"
+
+
+@pytest.mark.req("REQ-SIM-016")
+def test_an_orphan_forages_around_itself(registry: Registry, make_world: MakeWorld) -> None:
+    """AC1: with no parent in the world a child forages near where it stands."""
+    kid = Villager("k", "K", Coord(5, 2), adult=False, parents=("x", "y"))
+    near = Node("b0", "berry_bush", Coord(5, 4), 20)
+    far = Node("b1", "berry_bush", Coord(0, 9), 20)
+    state = make_world(ROWS, [kid], [near, far])
+    decision = decide(registry, state)
+    assert isinstance(decision.intent, MoveTo) and decision.target == "b0"
+
+
+@pytest.mark.req("REQ-SIM-016")
+def test_a_child_does_not_follow_an_avoided_parent(
+    registry: Registry, make_world: MakeWorld
+) -> None:
+    """AC1: a parent the child failed to reach is avoided, so the child does not chase it."""
+    state = make_world(ROWS, family(Coord(9, 9)))
+    memory = {"k": Memory(avoid={"m": state.tick + 5})}
+    assert decide(registry, state, memory=memory).intent == Wait("k")
+    assert isinstance(decide(registry, state, memory={"k": Memory(avoid={"z": 9})}).intent, MoveTo)
+
+
+@pytest.mark.req("REQ-SIM-016")
+def test_a_child_with_no_path_to_its_parent_does_not_follow(
+    registry: Registry, make_world: MakeWorld, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """AC1: when no step toward the parent exists, follow yields no decision."""
+    state = make_world(ROWS, family(Coord(9, 9)))
+    monkeypatch.setattr(View, "go", lambda self, villager, tiles: None)
+    ctx = Context.build(registry, default_config())
+    view = View(ctx, state, CONFIG, NodeIndex(state.nodes.values(), CONFIG.index_cell), {})
+    assert rules.follow(view, state.villagers["k"]) is None
+
+
+@pytest.mark.req("REQ-AGT-008")
+def test_the_scripted_controller_carries_the_given_minds(
+    registry: Registry, make_world: MakeWorld
+) -> None:
+    """AC1: model minds passed to the factory reach the controller; default is none."""
+    ctx = Context.build(registry, default_config())
+    mind = ScriptedMind()
+    assert scripted_controller(ctx, CONFIG, {"k": mind}).minds == {"k": mind}
+    assert scripted_controller(ctx, CONFIG).minds == {}
