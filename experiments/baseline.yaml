@@ -1,0 +1,34 @@
+# The all-scripted baseline village (ADR-0016). Copy it to start a new experiment.
+# engine: and agents: override the packaged default_settings.yaml key by key.
+seed: 1
+packs: [base]
+map:
+  width: 64
+  height: 64
+  bands:
+    - {terrain: water, share: 0.12}
+    - {terrain: fertile_soil, share: 0.18}
+    - {terrain: grass, share: 0.35}
+    - {terrain: forest, share: 0.25}
+    - {terrain: rock, share: 0.10}
+  veins:
+    - {terrain: iron_vein, share: 0.02, host: rock}
+    - {terrain: gold_vein, share: 0.005, host: rock}
+  start_terrain: grass
+  start_radius: 6
+population:
+  - {id: ada, name: Ada, sex: female, age_days: 210, traits: [industrious], skills: {foraging: 20.0}, inventory: {berries: 4}}
+  - {id: bram, name: Bram, sex: male, age_days: 260, skills: {woodcutting: 25.0}, inventory: {berries: 4}}
+  - {id: cora, name: Cora, sex: female, age_days: 180, traits: [altruistic], skills: {masonry: 20.0}, inventory: {berries: 4}}
+  - {id: dov, name: Dov, sex: male, age_days: 300, traits: [dutiful], skills: {woodcutting: 15.0, masonry: 10.0}, inventory: {berries: 4}}
+  - {id: elin, name: Elin, sex: female, age_days: 150, skills: {fishing: 20.0}, inventory: {berries: 4}}
+  - {id: fenn, name: Fenn, sex: male, age_days: 140, traits: [greedy], skills: {hunting: 20.0}, inventory: {berries: 4}}
+  - {id: greta, name: Greta, sex: female, age_days: 380, traits: [fearful], skills: {foraging: 30.0}, inventory: {berries: 4}}
+  - {id: hugo, name: Hugo, sex: male, age_days: 220, skills: {masonry: 25.0}, inventory: {berries: 4}}
+  - {id: ines, name: Ines, sex: female, age_days: 240, traits: [rebellious], skills: {woodcutting: 20.0}, inventory: {berries: 4}}
+  - {id: jory, name: Jory, sex: male, age_days: 170, skills: {foraging: 15.0, fishing: 10.0}, inventory: {berries: 4}}
+  - {id: kaia, name: Kaia, sex: female, age_days: 135, traits: [industrious], skills: {hunting: 10.0}, inventory: {berries: 4}}
+  - {id: lars, name: Lars, sex: male, age_days: 330, skills: {woodcutting: 10.0, masonry: 20.0}, inventory: {berries: 4}}
+run:
+  days: 60
+  snapshot_every_days: 1

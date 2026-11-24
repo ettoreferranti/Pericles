@@ -136,7 +136,7 @@ def value_noise(
     return [v / total for v in result]
 
 
-def _validate(params: MapParams, registry: Registry) -> None:
+def validate(params: MapParams, registry: Registry) -> None:
     if params.width < 1 or params.height < 1:
         raise ValueError("width and height must be at least 1")
     if params.start_radius < 0:
@@ -180,7 +180,7 @@ def _validate(params: MapParams, registry: Registry) -> None:
 
 
 def generate_map(seed: int, params: MapParams, registry: Registry) -> TileMap:
-    _validate(params, registry)
+    validate(params, registry)
     width, height = params.width, params.height
     n = width * height
     rng = random.Random(seed)
