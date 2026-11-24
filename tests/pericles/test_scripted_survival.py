@@ -147,3 +147,68 @@ def test_a_scripted_villager_stays_alive(registry: Registry, make_world: MakeWor
     assert "a" in state.villagers
     assert {"ate", "fell_asleep", "work_done"} <= kinds
     assert state.villagers["a"].needs["hunger"] < CONFIG.urgent_at["eat"]
+
+
+def test_gathering_prefers_the_most_skilled_job(registry: Registry, make_world: MakeWorld) -> None:
+    """AC1: of the foods it can gather, a hungry villager takes the job it is best at."""
+    a = Villager("a", "A", Coord(0, 0), needs={"hunger": EAT_AT}, skills={"fishing": 80.0})
+    nodes = [Node("n0", "berry_bush", Coord(2, 0), 5), Node("n1", "fish_shoal", Coord(0, 5), 5)]
+    decision = decide(registry, make_world(ROWS, [a], nodes))
+    assert (decision.target, decision.job) == ("n1", "catch_fish")
+    b = Villager("a", "A", Coord(0, 0), needs={"hunger": EAT_AT}, skills={"foraging": 80.0})
+    decision = decide(registry, make_world(ROWS, [b], nodes))
+    assert (decision.target, decision.job) == ("n0", "gather_berries")
+
+
+def test_children_only_take_light_work(registry: Registry, make_world: MakeWorld) -> None:
+    """AC1: a hungry child gathers only jobs tagged for children, however skilled it is elsewhere."""
+    kid = Villager(
+        "a", "A", Coord(0, 0), needs={"hunger": EAT_AT}, skills={"fishing": 90.0}, adult=False
+    )
+    nodes = [Node("n0", "berry_bush", Coord(2, 0), 5), Node("n1", "fish_shoal", Coord(0, 2), 5)]
+    decision = decide(registry, make_world(ROWS, [kid], nodes))
+    assert (decision.target, decision.job) == ("n0", "gather_berries")
+
+
+def test_no_gathering_without_room_to_carry(registry: Registry, make_world: MakeWorld) -> None:
+    """AC1: a villager whose hands are full of other goods does not walk to a node it cannot use."""
+    a = Villager("a", "A", Coord(0, 0), needs={"hunger": EAT_AT})
+    a.inventory.add(registry, "wood", 15)
+    state = make_world(ROWS, [a], [Node("n0", "berry_bush", Coord(4, 0), 5)])
+    assert decide(registry, state).intent == Wait("a")
+
+
+def test_an_avoided_or_empty_node_is_not_a_target(
+    registry: Registry, make_world: MakeWorld
+) -> None:
+    """AC1: nodes that failed recently, or are exhausted, are passed over."""
+    a = Villager("a", "A", Coord(0, 0), needs={"hunger": EAT_AT})
+    nodes = [Node("n0", "berry_bush", Coord(2, 0), 5), Node("n1", "berry_bush", Coord(0, 6), 0)]
+    state = make_world(ROWS, [a], nodes)
+    avoid = {"a": Memory(avoid={"n0": state.tick + 50})}
+    assert decide(registry, state, memory=avoid).intent == Wait("a")
+
+
+def test_a_hungry_villager_takes_only_what_fits_from_a_store(
+    registry: Registry, make_world: MakeWorld
+) -> None:
+    """AC1: fetching from a store takes at most what is there."""
+    a = Villager("a", "A", Coord(5, 6), needs={"hunger": EAT_AT})
+    state = make_world(ROWS, [a])
+    store(state, Coord(6, 6), {"fish": 2}, registry)
+    assert decide(registry, state).intent == Take("a", "s0", "fish", 2)
+
+
+def test_a_warm_villager_at_home_does_not_stay(registry: Registry, make_world: MakeWorld) -> None:
+    """AC1: shelter passes for a villager already at home who is not cold."""
+    a = Villager("a", "A", Coord(6, 6), home="h0", needs={"cold": CONFIG.warm_until})
+    state = make_world(ROWS, [a])
+    state.buildings["h0"] = Building(
+        "h0", "house", Coord(6, 6), Ownership("communal"), complete=True
+    )
+    assert decide(registry, state).intent == Wait("a")
+    a.needs["cold"] = CONFIG.warm_until + 1
+    assert decide(registry, state).intent == Wait("a")
+    a.needs["cold"] = CONFIG.warm_until
+    a.needs["fatigue"] = SLEEP_AT
+    assert decide(registry, state).intent == Sleep("a")
