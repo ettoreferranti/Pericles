@@ -44,3 +44,25 @@ engine:
   family_events: [born, died, couple_formed, came_of_age]
   village_events: [building_completed, technology_learned]
   childhood_memory_limit: 20
+
+# Scripted villagers (ADR-0016). Levels are need levels on the 0..critical scale.
+agents:
+  act_at: {eat: 50.0, sleep: 75.0, shelter: 60.0}
+  urgent_at: {eat: 85.0, sleep: 95.0, shelter: 85.0}
+  warm_until: 10.0
+  food_carry: 60.0
+  deposit_load: 0.7
+  food_reserve_per_capita: 60.0
+  storage_per_capita: 15.0
+  skill_weight: 1.0
+  house_building: house
+  store_building: storehouse
+  site_search_radius: 12
+  site_gap: 1
+  max_builders: 3
+  node_search_radius: 48
+  index_cell: 8
+  avoid_ticks: 240
+  idle_ticks: 15
+  child_follow_radius: 4
+  couples: true

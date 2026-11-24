@@ -4,10 +4,24 @@ from pathlib import Path
 import pytest
 import yaml
 
+from pericles.agents.config import AgentConfig
 from pericles.core.config import EngineConfig
+from pericles.core.content.loader import read_yaml
 from pericles.core.modifiers import Modifier, Op, Target
-from pericles.experiment.defaults import DEFAULT_CALENDAR, DEFAULT_SETTINGS, default_config
-from pericles.experiment.settings import SettingsError, engine_config_from_mapping, load_settings
+from pericles.experiment.defaults import (
+    DEFAULT_CALENDAR,
+    DEFAULT_SETTINGS,
+    default_agent_config,
+    default_config,
+    default_settings_mapping,
+)
+from pericles.experiment.settings import (
+    SettingsError,
+    agent_config_from_mapping,
+    engine_config_from_mapping,
+    load_agent_settings,
+    load_settings,
+)
 
 
 def write(tmp_path: Path, text: str) -> Path:
@@ -157,3 +171,44 @@ def test_the_default_winter_raises_food_and_warmth_needs() -> None:
         Modifier(Target("need", "cold"), "rate", Op.MUL, 6.0, "season:winter"),
     )
     assert all(s.modifiers == () for s in DEFAULT_CALENDAR.seasons[:3])
+
+
+@pytest.mark.req("REQ-EXP-001")
+def test_agents_section_loads_with_named_errors(tmp_path: Path) -> None:
+    """AC2: the agents section is validated; errors name the field."""
+    good = agent_config_from_mapping(
+        {"idle_ticks": 5, "act_at": {"eat": 40.0, "sleep": 70.0, "shelter": 60.0}}
+    )
+    assert good.idle_ticks == 5 and good.act_at["eat"] == 40.0
+    for data, prefix in [
+        ({"idle": 5}, "agents.idle: unknown setting"),
+        ({"idle_ticks": "5"}, "agents.idle_ticks:"),
+        ({"idle_ticks": True}, "agents.idle_ticks:"),
+        ({"act_at": [1.0]}, "agents.act_at:"),
+        ({"deposit_load": 2.0}, "agents: deposit_load"),
+        ([1, 2], "agents: expected a mapping"),
+    ]:
+        with pytest.raises(SettingsError) as caught:
+            agent_config_from_mapping(data)
+        assert str(caught.value).startswith(prefix), str(caught.value)
+
+
+@pytest.mark.req("REQ-EXP-001")
+def test_load_agent_settings_reads_the_agents_section(tmp_path: Path) -> None:
+    """AC1: a settings file sets agent parameters; unknown sections are refused."""
+    path = tmp_path / "s.yaml"
+    path.write_text("agents:\n  idle_ticks: 7\n", encoding="utf-8")
+    assert load_agent_settings(path).idle_ticks == 7
+    path.write_text("agentz: {}\n", encoding="utf-8")
+    with pytest.raises(SettingsError, match="agentz: unknown section"):
+        load_agent_settings(path)
+
+
+@pytest.mark.req("REQ-EXP-001")
+def test_default_settings_list_every_agent_parameter() -> None:
+    """AC1: the packaged settings file spells out every agent parameter."""
+    raw = read_yaml(DEFAULT_SETTINGS)
+    assert set(raw["agents"]) == {f.name for f in dataclasses.fields(AgentConfig)}
+    assert default_settings_mapping() == raw
+    assert default_agent_config() == AgentConfig()
+    assert default_agent_config(idle_ticks=3).idle_ticks == 3

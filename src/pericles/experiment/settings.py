@@ -10,13 +10,14 @@ from typing import Any
 
 from pydantic import TypeAdapter, ValidationError
 
+from pericles.agents.config import AgentConfig
 from pericles.core.calendar import Calendar, Season
 from pericles.core.config import EngineConfig
 from pericles.core.content.loader import ContentError, read_yaml
 from pericles.core.content.schema import ModifierDef
 from pericles.core.modifiers import Modifier
 
-SECTIONS = ("engine",)
+SECTIONS = ("engine", "agents")
 
 
 class SettingsError(ValueError):
@@ -95,7 +96,16 @@ def engine_config_from_mapping(data: object, where: str = "engine") -> EngineCon
         raise SettingsError(f"{where}: {error}") from None
 
 
-def load_settings(path: Path) -> EngineConfig:
+def agent_config_from_mapping(data: object, where: str = "agents") -> AgentConfig:
+    agents = _mapping(data, where)
+    values = _values(AgentConfig, agents, where, nested=set())
+    try:
+        return AgentConfig(**values)
+    except ValueError as error:
+        raise SettingsError(f"{where}: {error}") from None
+
+
+def _read(path: Path) -> dict[str, Any]:
     try:
         raw = read_yaml(path)
     except ContentError as error:
@@ -103,4 +113,12 @@ def load_settings(path: Path) -> EngineConfig:
     for key in sorted(raw):
         if key not in SECTIONS:
             raise SettingsError(f"{key}: unknown section")
-    return engine_config_from_mapping(raw.get("engine", {}))
+    return raw
+
+
+def load_settings(path: Path) -> EngineConfig:
+    return engine_config_from_mapping(_read(path).get("engine", {}))
+
+
+def load_agent_settings(path: Path) -> AgentConfig:
+    return agent_config_from_mapping(_read(path).get("agents", {}))

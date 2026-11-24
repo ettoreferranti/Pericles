@@ -19,5 +19,6 @@ Format: Michael Nygard. New ADRs get the next number. Superseded ADRs stay, with
 | [0013](0013-engine-kernel-conventions.md) | Engine kernel conventions | Accepted |
 | [0014](0014-gameplay-state-model.md) | Gameplay state model | Accepted |
 | [0015](0015-life-and-population.md) | Life and population | Accepted |
+| [0016](0016-agent-layer-and-runs.md) | Agent layer, scripted villagers and running villages | Accepted |
 
 Template: copy any ADR and keep the sections Context / Decision / Consequences.
