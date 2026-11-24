@@ -349,3 +349,13 @@ def test_no_decision_idles_the_villager(registry: Registry, make_world: MakeWorl
     state.tick = AgentConfig().idle_ticks - 1
     ctl.intents(state)
     assert mind.asked == ["a"]
+
+
+@pytest.mark.req("REQ-AGT-008")
+def test_one_villager_with_no_decision_does_not_stop_the_rest(
+    registry: Registry, make_world: MakeWorld
+) -> None:
+    """AC1: villagers after one with nothing to do are still asked."""
+    state = make_world(ROWS, [Villager("a", "A", Coord(0, 0)), Villager("b", "B", Coord(0, 0))])
+    mind = Script(lambda v: None if v.id == "a" else walk(v))
+    assert controller(registry, mind).intents(state) == [MoveTo("b", GOAL)]
