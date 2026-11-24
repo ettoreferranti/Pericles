@@ -114,7 +114,7 @@ def test_redundant_intents_are_not_sent(registry: Registry, make_world: MakeWorl
 def test_wait_idles_the_villager_without_an_intent(
     registry: Registry, make_world: MakeWorld
 ) -> None:
-    """AC1: a waiting villager is not asked again until idle_ticks pass, unless urgent."""
+    """AC1: a waiting villager is not asked again until idle_ticks pass."""
     a = Villager("a", "A", Coord(0, 0))
     state = make_world(ROWS, [a])
     mind = Script(lambda v: Decision(Wait(v.id)))
@@ -124,13 +124,9 @@ def test_wait_idles_the_villager_without_an_intent(
     state.tick = AgentConfig().idle_ticks - 1
     ctl.intents(state)
     assert mind.asked == ["a"]
-    a.needs["hunger"] = AgentConfig().urgent_at["eat"]
+    state.tick = ctl.memory["a"].idle_until
     ctl.intents(state)
     assert mind.asked == ["a", "a"]
-    state.tick = ctl.memory["a"].idle_until
-    a.needs["hunger"] = 0.0
-    ctl.intents(state)
-    assert mind.asked == ["a", "a", "a"]
 
 
 @pytest.mark.req("REQ-SIM-016")
@@ -264,7 +260,7 @@ def test_every_mind_gets_a_real_view(registry: Registry, make_world: MakeWorld) 
     class Spy:
         def decide(self, view: View, villager: Villager) -> Decision | None:
             seen.append(view)
-            return None
+            return walk(villager)
 
     state = make_world(
         ROWS,
@@ -307,6 +303,7 @@ def test_every_failure_counts_and_later_villagers_are_still_handled(
     assert [ctl.memory[v].idle_until for v in "ab"] == [AgentConfig().idle_ticks] * 2
 
     state.tick = 5
+    ctl.memory["a"].avoid["n1"] = 99
     ctl.observe(
         state,
         [
@@ -316,3 +313,39 @@ def test_every_failure_counts_and_later_villagers_are_still_handled(
         ],
     )
     assert ctl.memory["a"].idle_until == state.tick + AgentConfig().idle_ticks
+    assert ctl.memory["a"].avoid == {"n1": 99}
+
+
+@pytest.mark.req("REQ-AGT-008")
+def test_an_idle_window_beats_urgency(registry: Registry, make_world: MakeWorld) -> None:
+    """AC1: an urgent villager whose untargeted intent failed waits out its idle window."""
+    config = AgentConfig()
+    a = Villager("a", "A", Coord(0, 0), needs={"hunger": config.urgent_at["eat"]})
+    state = make_world(ROWS, [a])
+    mind = Script(lambda v: Decision(MoveTo(v.id, GOAL)))
+    ctl = controller(registry, mind)
+    ctl.intents(state)
+    ctl.observe(state, [Event(0, 0, "intent_rejected", {"actor": "a", "reason": "x"})])
+    ctl.memory["a"].target = None
+    ctl.observe(state, [Event(0, 0, "intent_rejected", {"actor": "a", "reason": "x"})])
+    until = ctl.memory["a"].idle_until
+    assert until == state.tick + config.idle_ticks
+    state.tick = until - 1
+    assert ctl.intents(state) == []
+    assert mind.asked == ["a"]
+    state.tick = until
+    ctl.intents(state)
+    assert mind.asked == ["a", "a"]
+
+
+@pytest.mark.req("REQ-AGT-008")
+def test_no_decision_idles_the_villager(registry: Registry, make_world: MakeWorld) -> None:
+    """AC1: a mind with nothing to do is not asked again until idle_ticks pass."""
+    state = make_world(ROWS, [Villager("a", "A", Coord(0, 0))])
+    mind = Script(lambda v: None)
+    ctl = controller(registry, mind)
+    assert ctl.intents(state) == []
+    assert ctl.memory["a"].idle_until == AgentConfig().idle_ticks
+    state.tick = AgentConfig().idle_ticks - 1
+    ctl.intents(state)
+    assert mind.asked == ["a"]

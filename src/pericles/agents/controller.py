@@ -78,7 +78,10 @@ class Controller:
             if not self._due(view, villager, memory):
                 continue
             decision = self._decide(view, villager)
-            if decision is None or _redundant(villager, decision.intent):
+            if decision is None:
+                memory.idle_until = state.tick + self.config.idle_ticks
+                continue
+            if _redundant(villager, decision.intent):
                 continue
             memory.target, memory.job = decision.target, decision.job
             if isinstance(decision.intent, Wait):
@@ -88,11 +91,11 @@ class Controller:
         return intents
 
     def _due(self, view: View, villager: Villager, memory: Memory) -> bool:
+        if view.tick < memory.idle_until:
+            return False
         if any(view.level(villager, r) >= self.config.urgent_at[r] for r in RELIEFS):
             return True
-        if villager.path or villager.activity is not None:
-            return False
-        return view.tick >= memory.idle_until
+        return not villager.path and villager.activity is None
 
     def _decide(self, view: View, villager: Villager) -> Decision | None:
         if not villager.adult:
