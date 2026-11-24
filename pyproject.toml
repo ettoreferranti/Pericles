@@ -68,3 +68,5 @@ known-first-party = ["pericles", "pericles_tools"]
 [tool.mutmut]
 source_paths = ["src/pericles"]
 pytest_add_cli_args_test_selection = ["tests/pericles"]
+# tests load experiments/baseline.yaml relative to the repo root
+also_copy = ["experiments"]

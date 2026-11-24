@@ -416,3 +416,17 @@ def test_couples_without_a_spare_bed_at_home_want_another_house(
     assert view_of(registry, state, storage_per_capita=0.0).housing_shortfall() == 1  # full
     del state.villagers["h0r1"]
     assert view_of(registry, state, storage_per_capita=0.0).housing_shortfall() == -1
+
+
+def test_every_crowded_couple_counts_once(registry: Registry, make_world: MakeWorld) -> None:
+    """AC1: singles are skipped, and two crowded couples want two beds (one each)."""
+    single = Villager("s", "S", Coord(0, 0), sex="female", home="h0")
+    pairs = [
+        Villager(f"{p}{q}", "P", Coord(0, 0), sex=sex, partner=f"{p}{other}", home=f"h{q}")
+        for p in ("a", "b")
+        for q, other, sex in ((1, 2, "female"), (2, 1, "male"))
+    ]
+    state = make_world(ROWS, [single, *pairs])
+    for i, at in enumerate((Coord(1, 1), Coord(5, 1), Coord(9, 1))):
+        house(state, f"h{i}", at)
+    assert view_of(registry, state).crowded_couples() == 2
