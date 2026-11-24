@@ -323,14 +323,16 @@ def test_housing_shortfall_counts_free_communal_beds_and_can_go_negative(
     a = Villager("a", "A", Coord(0, 0), home="c1")
     b = Villager("b", "B", Coord(0, 0), home="p1")
     c = Villager("c", "C", Coord(0, 0))
-    state = make_world(ROWS, [a, b, c])
+    d = Villager("d", "D", Coord(0, 0))
+    e = Villager("e", "E", Coord(0, 0), home="p1")
+    state = make_world(ROWS, [a, b, c, d, e])
     building(state, "c1", "house", Coord(2, 2))
     building(state, "p1", "house", Coord(6, 6), owner="b")
     view = view_of(registry, state)
-    assert view.housing_shortfall() == 1 - (capacity - 1)
+    assert view.housing_shortfall() == 2 - (capacity - 1)
     building(state, "c2", "house", Coord(8, 2), complete=False)
     building(state, "f1", "farm", Coord(2, 8))
-    assert view_of(registry, state).housing_shortfall() == 1 - (capacity - 1) - capacity
+    assert view_of(registry, state).housing_shortfall() == 2 - (capacity - 1) - capacity
     assert view_of(registry, state).housing_shortfall() < 0
 
 
@@ -344,3 +346,50 @@ def test_free_origin_breaks_ties_by_row_then_column(
     view = view_of(registry, state, site_search_radius=3, site_gap=0)
     assert view.free_origin("house") == Coord(centre.x + 1, centre.y)
     assert view.free_origin("house") == Coord(centre.x + 1, centre.y)
+
+
+def test_house_for_capacity_edges(registry: Registry, make_world: MakeWorld) -> None:
+    """AC1: one bed left fits a single villager, two fit an expecting mother, farms never house."""
+    capacity = registry.buildings["house"].housing
+    single = Villager("s", "S", Coord(0, 0))
+    mother = Villager("m", "M", Coord(0, 0), sex="female", pregnancy=Pregnancy("f", 99))
+    state = make_world(ROWS, [single, mother])
+    building(state, "h", "house", Coord(5, 5))
+    building(state, "farm", "farm", Coord(1, 1))
+    for i in range(capacity - 1):
+        state.villagers[f"o{i}"] = Villager(f"o{i}", "O", Coord(0, 0), home="h")
+    house = view_of(registry, state).house_for(single)
+    assert house is not None and house.id == "h"
+    assert view_of(registry, state).house_for(mother) is None
+    state.villagers["o0"].home = None
+    house = view_of(registry, state).house_for(mother)
+    assert house is not None and house.id == "h"
+    resident = Villager("r", "R", Coord(0, 0), home="farm")
+    state.villagers["r"] = resident
+    del state.buildings["h"]
+    assert view_of(registry, state).house_for(resident) is None
+
+
+def _only_origin_free(registry: Registry, make_world: MakeWorld, dx: int, dy: int) -> Coord | None:
+    state = make_world(ROWS)
+    c = state.tilemap.start()
+    clear = {Coord(c.x + dx + i, c.y + dy + j) for i in range(2) for j in range(2)}
+    for x in range(c.x - 1, c.x + 3):
+        for y in range(c.y - 1, c.y + 3):
+            if Coord(x, y) not in clear:
+                state.nodes[f"n{x}_{y}"] = Node(f"n{x}_{y}", "berry_bush", Coord(x, y), 5)
+    view = view_of(registry, state, site_search_radius=1, site_gap=0)
+    found = view.free_origin("house")
+    assert found is None or found == Coord(c.x + dx, c.y + dy)
+    return found
+
+
+def test_free_origin_searches_the_whole_radius_and_no_further(
+    registry: Registry, make_world: MakeWorld
+) -> None:
+    """AC1: every offset within site_search_radius of the centre is considered, none beyond."""
+    for dx, dy in [(-1, -1), (1, 1), (-1, 1), (1, -1)]:
+        assert _only_origin_free(registry, make_world, dx, dy) is not None
+    state = make_world(ROWS)
+    state.nodes["n0"] = Node("n0", "berry_bush", state.tilemap.start(), 5)
+    assert view_of(registry, state, site_search_radius=0, site_gap=0).free_origin("house") is None
