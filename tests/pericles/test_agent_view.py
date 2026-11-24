@@ -235,3 +235,35 @@ def test_memory_round_trips() -> None:
     memory = Memory(target="n1", job="fell_tree", idle_until=9, avoid={"n2": 30, "b0": 12})
     assert Memory.from_dict(memory.to_dict()) == memory
     assert list(memory.to_dict()["avoid"]) == ["b0", "n2"]
+
+
+def test_homes_stock_and_sites(registry: Registry, make_world: MakeWorld) -> None:
+    """AC1: homes, food stock and open sites are read from the world."""
+    a = Villager("a", "A", Coord(2, 2), home="h1")
+    b = Villager("b", "B", Coord(9, 9), home="h2")
+    state = make_world(ROWS, [a, b])
+    building(state, "h1", "house", Coord(2, 3))
+    building(state, "h2", "house", Coord(5, 5), complete=False)
+    state.villagers["a"].inventory.add(registry, "berries", 4)
+    state.buildings["h1"].storage.add(registry, "berries", 2)
+    state.buildings["h2"].delivered["wood"] = 4
+    view = view_of(registry, state, food_reserve_per_capita=7.0)
+    home = view.home(a)
+    assert home is not None and home.id == "h1"
+    assert view.home(b) is None
+    assert view.at_home(a) and not view.at_home(b)
+    assert view.food_stock() == registry.items["berries"].nutrition * 6
+    assert view.food_target() == 14.0
+    assert [s.id for s in view.sites()] == ["h2"]
+    assert dict(view.needed()) == {"wood": 6, "stone": 4}
+
+
+def test_center_is_the_first_communal_store(registry: Registry, make_world: MakeWorld) -> None:
+    """AC1: the village centre is its earliest communal store, else the start."""
+    state = make_world(ROWS)
+    start = view_of(registry, state).center()
+    building(state, "b2", "storehouse", Coord(7, 7))
+    building(state, "b1", "storehouse", Coord(3, 3))
+    building(state, "b0", "storehouse", Coord(1, 1), owner="z")
+    assert view_of(registry, state).center() == Coord(3, 3)
+    assert start == state.tilemap.start()
