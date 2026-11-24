@@ -448,10 +448,13 @@ def test_a_couple_in_a_full_house_moves_together_to_the_nearest_roomy_house(
         state.villagers[f"o{i}"] = Villager(f"o{i}", "O", Coord(0, 0), home="h0")
     for i in range(capacity - 2):
         state.villagers[f"q{i}"] = Villager(f"q{i}", "Q", Coord(0, 0), home="h1")
+    for i in range(capacity - 3):  # h5 has exactly the three beds the family needs
+        state.villagers[f"r{i}"] = Villager(f"r{i}", "R", Coord(0, 0), home="h5")
     view = view_of(registry, state, storage_per_capita=0.0)
     assert view.family_house(a) is not None
     decision = rules.home(view, a)
     assert decision is not None and decision.intent == SetHome("a", "h5")  # h5 < h9, same distance
+    assert decision.target == "h5"
     a.home = "h5"
     decision = rules.home(view_of(registry, state, storage_per_capita=0.0), b)
     assert decision is not None and decision.intent == SetHome("b", "h5")
@@ -477,3 +480,26 @@ def test_a_couple_in_a_full_house_stays_when_no_house_has_room_for_three(
     assert view.family_house(a) is None and rules.home(view, a) is None
     del state.villagers["o0"]  # a spare bed at home: no reason to move
     assert rules.home(view_of(registry, state, storage_per_capita=0.0), a) is None
+
+
+def test_a_crowded_couple_may_move_into_either_partners_house_only(
+    registry: Registry, make_world: MakeWorld
+) -> None:
+    """AC1: the family house is one the mover or its partner may live in, never a stranger's."""
+    capacity = registry.buildings["house"].housing
+    a = Villager("a", "A", Coord(8, 8), sex="female", partner="b", home="h0")
+    b = Villager("b", "B", Coord(8, 8), sex="male", partner="a", home="h0")
+    state = make_world(ROWS, [a, b])
+    house(state, "h0", Coord(1, 1))
+    for i in range(capacity - 2):
+        state.villagers[f"o{i}"] = Villager(f"o{i}", "O", Coord(0, 0), home="h0")
+    stranger = Building("x", "house", Coord(8, 6), Ownership("personal", ("z",)), complete=True)
+    state.buildings["x"] = stranger
+    for owner in ("a", "b"):
+        state.buildings["p"] = Building(
+            "p", "house", Coord(12, 12), Ownership("personal", (owner,)), complete=True
+        )
+        house_ = view_of(registry, state, storage_per_capita=0.0).family_house(a)
+        assert house_ is not None and house_.id == "p", owner
+    del state.buildings["p"]
+    assert view_of(registry, state, storage_per_capita=0.0).family_house(a) is None
