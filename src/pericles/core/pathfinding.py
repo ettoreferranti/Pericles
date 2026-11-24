@@ -13,6 +13,10 @@ from pericles.core.mapgen import TileMap
 
 
 class CostField(Protocol):
+    """Step costs for `find_path`: None is impassable. Costs must be pure (the same tile
+    always costs the same), and tiles off the map are impassable: `find_path` never asks
+    about them."""
+
     width: int
     height: int
     min_cost: float

@@ -182,9 +182,9 @@ class View:
         self._origin_cache = origins if origins is not None else OriginCache()
         self._origins: dict[str, Coord | None] | None = None
         self._occupancy: dict[str, int] | None = None
-        self._sites: list[Building] | None = None
-        self._storage: list[Building] | None = None
-        self._usable: dict[str, list[Building]] = {}
+        self._sites: tuple[Building, ...] | None = None
+        self._storage: tuple[Building, ...] | None = None
+        self._usable: dict[str, tuple[Building, ...]] = {}
         self._housing_shortfall: int | None = None
         self._storage_shortfall: float | None = None
         self._center: Coord | None = None
@@ -194,7 +194,7 @@ class View:
         self._jobs: Counter[str] | None = None
         self._targets: Counter[tuple[str | None, str]] | None = None
         self._producing: dict[str, frozenset[str]] = {}
-        self._houses: list[tuple[Building, int]] | None = None
+        self._houses: tuple[tuple[Building, int], ...] | None = None
         self._family: dict[tuple[str, ...], Building | None] = {}
         self._urgent = [
             (need, config.urgent_at[relief])
@@ -279,21 +279,23 @@ class View:
     def at_home(self, villager: Villager) -> bool:
         return at_home(self.ctx, self.state, villager)
 
-    def _storehouses(self) -> list[Building]:
+    def _storehouses(self) -> tuple[Building, ...]:
         """Complete buildings with storage, by id."""
         if self._storage is None:
             registry = self.ctx.registry
-            self._storage = sorted(
-                (
-                    b
-                    for b in self.state.buildings.values()
-                    if b.complete and registry.buildings[b.kind].storage > 0
-                ),
-                key=lambda b: b.id,
+            self._storage = tuple(
+                sorted(
+                    (
+                        b
+                        for b in self.state.buildings.values()
+                        if b.complete and registry.buildings[b.kind].storage > 0
+                    ),
+                    key=lambda b: b.id,
+                )
             )
         return self._storage
 
-    def _usable_stores(self, villager: Villager) -> list[Building]:
+    def _usable_stores(self, villager: Villager) -> tuple[Building, ...]:
         """The stores `villager` may use and does not avoid, by id (avoidance is fixed while
         minds decide: only `Controller.observe` changes it)."""
         usable = self._usable.get(villager.id)
@@ -301,11 +303,11 @@ class View:
             memory = self.memory.get(villager.id)
             avoid = memory.avoid if memory is not None else {}
             tick = self.state.tick
-            usable = [
+            usable = tuple(
                 b
                 for b in self._storehouses()
                 if b.ownership.owned_by(villager.id) and avoid.get(b.id, tick) <= tick
-            ]
+            )
             self._usable[villager.id] = usable
         return usable
 
@@ -319,13 +321,13 @@ class View:
         capacity = self.ctx.registry.buildings[building.kind].storage
         return capacity - sum(building.storage.totals().values())
 
-    def sites(self) -> list[Building]:
+    def sites(self) -> tuple[Building, ...]:
         if self._sites is None:
-            self._sites = [
+            self._sites = tuple(
                 self.state.buildings[b]
                 for b in sorted(self.state.buildings)
                 if not self.state.buildings[b].complete
-            ]
+            )
         return self._sites
 
     def needed(self) -> Counter[str]:
@@ -524,15 +526,15 @@ class View:
             self._family[pair] = options[0] if options else None
         return self._family[pair]
 
-    def _free_beds(self) -> list[tuple[Building, int]]:
+    def _free_beds(self) -> tuple[tuple[Building, int], ...]:
         """Complete buildings with beds, in building order, with their beds not taken."""
         if self._houses is None:
             registry = self.ctx.registry
-            self._houses = [
+            self._houses = tuple(
                 (b, registry.buildings[b.kind].housing - self.occupants(b.id))
                 for b in self.state.buildings.values()
                 if b.complete and registry.buildings[b.kind].housing > 0
-            ]
+            )
         return self._houses
 
     def couple_house(self, villager: Villager) -> Building | None:

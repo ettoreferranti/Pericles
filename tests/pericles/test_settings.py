@@ -107,6 +107,10 @@ def test_settings_build_a_calendar_with_season_modifiers(tmp_path: Path) -> None
             r"^engine\.calendar\.seasons\[0\]\.modifiers\.0\.target: ",
         ),
         (
+            "engine:\n  calendar: {seasons: [{name: a, days: 3}], _by_day: []}\n",
+            r"^engine\.calendar\._by_day: unknown setting$",
+        ),
+        (
             "engine:\n  calendar: {seasons: [{name: a, days: 3, colour: red}]}\n",
             r"^engine\.calendar\.seasons\[0\]\.colour: unknown setting$",
         ),

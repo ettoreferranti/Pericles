@@ -31,7 +31,8 @@ M1b gives villagers work: inventories, resource nodes, actions, tools, skills, b
    - A building occupies its footprint from the moment its site is placed.
    - The footprint of a building without an entrance is not walkable, and such a site cannot be placed on a villager.
    - Construction completes when every cost item has been delivered and every unit of build work is done. The delivered materials are then destroyed into the structure.
-   - The pathfinding cost field is cached on the tilemap's identity plus the set of blocked tiles, so the tilemap must be replaced rather than changed in place.
+   - The pathfinding cost field is cached on the tilemap's identity plus the building layout, the (id, kind, origin) of every building, so the tilemap must be replaced rather than changed in place. Paths found on a cost field are remembered for the rest of the in-game day, keyed on (start, goal), and dropped when the cost field or the day changes.
+   - These caches rely on four invariants. A building's id, kind and origin never change after it is placed. Blocked tiles derive only from those. Cost fields are pure: a tile always costs the same. The tilemap is replaced, never changed in place.
    - Recipes and research at a building allow at most its `workers` simultaneous workers. Actions located at a building count against the same limit when its `workers` is above 0 (0 means no limit for actions; recipes and research at such a building are never possible). Construction has no limit; build speed is `work_speed` resolved against the target `building`.
    - Construction can start only once every cost item has been delivered.
 8. **Ownership** is `personal(owner)`, `shared(owners)` or `communal`. Every take from a store emits `item_taken`. A take by a villager who is not an owner of a personal or shared store also emits `take_unowned`. A communal store is owned by every villager, so it never produces `take_unowned`; laws (M3) decide whether such takes are theft.
@@ -45,6 +46,8 @@ M1b gives villagers work: inventories, resource nodes, actions, tools, skills, b
     - Seasons carry the action tags they block.
     - The core default calendar is a single neutral season. The playable default (four seasons, with winter blocking `sowing`) lives in `pericles.experiment.defaults`, so the engine holds no game knowledge.
 11. **Farming in v1** is a single `farm_grain` action at a farm, not the sow/tend/harvest cycle sketched in spec §4.2. The cycle can be added later as content plus a crop-growth mechanic.
+
+Amended on 2026-11-24, during the M1d performance work (Task 11, REQ-NFR-003). The cost field was keyed on the set of blocked tiles, and that set was rebuilt for every move. It is now keyed on the building layout, from which the blocked tiles derive, and paths are remembered per cost field and day. Neither change alters any result: the pinned scripted-run digests are unchanged.
 
 ## Consequences
 

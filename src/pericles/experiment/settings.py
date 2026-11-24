@@ -36,10 +36,12 @@ def as_mapping(data: object, where: str) -> Mapping[str, Any]:
 def values_for(
     cls: type[Any], data: Mapping[str, Any], where: str, nested: set[str]
 ) -> dict[str, Any]:
-    """Validate the scalar fields of a dataclass; `nested` fields are left to the caller."""
+    """Validate the scalar fields of a dataclass; `nested` fields are left to the caller.
+
+    Fields with `init=False` are derived (such as `Calendar`'s season table), not settings."""
     as_mapping(data, where)
     hints = typing.get_type_hints(cls)
-    fields = {f.name: f for f in dataclasses.fields(cls)}
+    fields = {f.name: f for f in dataclasses.fields(cls) if f.init}
     for key in sorted(data):
         if key not in fields:
             raise SettingsError(f"{where}.{key}: unknown setting")
