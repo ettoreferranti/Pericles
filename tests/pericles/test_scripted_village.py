@@ -1,4 +1,5 @@
 from collections.abc import Callable
+from dataclasses import replace
 
 import pytest
 
@@ -6,7 +7,7 @@ from pericles.agents import rules
 from pericles.agents.config import AgentConfig
 from pericles.agents.controller import Controller
 from pericles.agents.scripted import ScriptedMind
-from pericles.agents.view import CONSTRUCT, Memory, NodeIndex, View
+from pericles.agents.view import CONSTRUCT, Memory, NodeIndex, View, beds_needed
 from pericles.core.buildings import Building, Ownership, footprint
 from pericles.core.content.registry import Registry
 from pericles.core.context import Context
@@ -359,3 +360,34 @@ def test_houses_come_before_storehouses(registry: Registry, make_world: MakeWorl
     assert (
         rules.wanted_building(view_of(registry, state, storage_per_capita=15.0), a) == "storehouse"
     )
+
+
+def test_beds_needed_counts_a_child_on_the_way() -> None:
+    """AC1: a villager needs one bed, two when expecting."""
+    assert beds_needed(Villager("a", "A", Coord(0, 0))) == 1
+    assert beds_needed(Villager("a", "A", Coord(0, 0), pregnancy=Pregnancy("b", 9))) == 2
+
+
+def test_a_one_bed_house_can_house_someone(registry: Registry, make_world: MakeWorld) -> None:
+    """AC1: a house with a single bed is still a home."""
+    hut = registry.buildings["house"].model_copy(update={"id": "hut", "housing": 1})
+    small = replace(registry, buildings={**registry.buildings, "hut": hut})
+    a = Villager("a", "A", Coord(0, 0))
+    state = make_world(ROWS, [a])
+    state.buildings["hut"] = Building(
+        "hut", "hut", Coord(3, 3), Ownership("communal"), complete=True
+    )
+    found = view_of(small, state).house_for(a)
+    assert found is not None and found.id == "hut"
+
+
+def test_a_storehouse_site_does_not_hold_back_another_storehouse(
+    registry: Registry, make_world: MakeWorld
+) -> None:
+    """AC1: only unfinished houses delay storage; other open sites do not."""
+    a = Villager("a", "A", Coord(8, 8), home="h0")
+    state = make_world(ROWS, [a])
+    house(state, "h0", Coord(1, 1))
+    state.buildings["s0"] = Building("s0", "storehouse", Coord(12, 12), Ownership("communal"))
+    view = view_of(registry, state, storage_per_capita=1000.0)
+    assert rules.wanted_building(view, a) == "storehouse"
