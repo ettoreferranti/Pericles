@@ -593,3 +593,28 @@ def test_a_crowded_couple_settles_in_one_house_through_the_engine(
     assert settled_at is not None
     assert state.villagers["a"].home == state.villagers["b"].home == "h5"
     assert late_moves == []
+
+
+def test_a_couple_apart_with_no_roomy_home_uses_the_family_house_or_waits(
+    registry: Registry, make_world: MakeWorld
+) -> None:
+    """AC1: apart, with neither home roomy enough, the pair goes to the family house; with
+    none, nobody moves. A homeless or departed partner leaves the couple house undecided."""
+    capacity = registry.buildings["house"].housing
+    a = Villager("a", "A", Coord(8, 8), sex="female", partner="b", home="h0")
+    b = Villager("b", "B", Coord(8, 8), sex="male", partner="a", home="h1")
+    state = make_world(ROWS, [a, b])
+    house(state, "h0", Coord(1, 1))
+    house(state, "h1", Coord(12, 1))
+    for hid in ("h0", "h1"):
+        for i in range(capacity - 1):
+            state.villagers[f"{hid}r{i}"] = Villager(f"{hid}r{i}", "R", Coord(0, 0), home=hid)
+    view = view_of(registry, state, storage_per_capita=0.0)
+    assert view.couple_house(a) is None and rules.home(view, a) is None
+    house(state, "h7", Coord(12, 12))
+    found = view_of(registry, state, storage_per_capita=0.0).couple_house(a)
+    assert found is not None and found.id == "h7"
+    b.home = None
+    assert view_of(registry, state, storage_per_capita=0.0).couple_house(a) is None
+    del state.villagers["b"]
+    assert view_of(registry, state, storage_per_capita=0.0).couple_house(a) is None
