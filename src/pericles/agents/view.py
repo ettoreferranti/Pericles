@@ -171,7 +171,7 @@ class View:
 
     def go(self, villager: Villager, tiles: Sequence[Coord]) -> MoveTo | None:
         """None if `tiles` are within reach; else a move to the nearest walkable tile by them."""
-        if near(villager.pos, tiles):
+        if not tiles or near(villager.pos, tiles):
             return None
         candidates = {c for t in tiles for c in (t, *t.neighbours4()) if self.walkable(c)}
         if not candidates:
@@ -294,6 +294,10 @@ class View:
         )
 
     def housing_shortfall(self) -> int:
+        """Homeless villagers less free communal beds and beds under construction.
+
+        Negative when the village has more beds, built or planned, than homeless villagers.
+        """
         homeless = sum(1 for v in self.state.villagers.values() if self.home(v) is None)
         registry = self.ctx.registry
         free = sum(

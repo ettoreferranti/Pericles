@@ -88,7 +88,8 @@ def test_nearest_node_skips_depleted_avoided_and_far(
     state.tick = 10
     node = view_of(registry, state, memory, node_search_radius=6).nearest_node(a, "berry_bush")
     assert node is not None and node.id == "n1"
-    assert view.nearest_node(a, "berry_bush", origin=Coord(11, 10), radius=1) is not None
+    far = view.nearest_node(a, "berry_bush", origin=Coord(11, 10), radius=1)
+    assert far is not None and far.id == "n3"
     assert view.nearest_node(a, "boulder") is None
 
 
@@ -267,3 +268,79 @@ def test_center_is_the_first_communal_store(registry: Registry, make_world: Make
     building(state, "b0", "storehouse", Coord(1, 1), owner="z")
     assert view_of(registry, state).center() == Coord(3, 3)
     assert start == state.tilemap.start()
+
+
+def test_go_with_no_tiles_is_already_there(registry: Registry, make_world: MakeWorld) -> None:
+    """AC1: an empty goal needs no move."""
+    a = Villager("a", "A", Coord(0, 0))
+    assert view_of(registry, make_world(ROWS, [a])).go(a, []) is None
+
+
+def test_house_for_picks_nearest_then_id_and_skips_foreign_houses(
+    registry: Registry, make_world: MakeWorld
+) -> None:
+    """AC1: the nearest usable house wins, ties go to the lower id, others' houses are skipped."""
+    a = Villager("a", "A", Coord(0, 0))
+    state = make_world(ROWS, [a])
+    building(state, "a_far", "house", Coord(8, 8))
+    building(state, "z_near", "house", Coord(3, 0))
+    building(state, "c_mine", "house", Coord(0, 5), owner="a")
+    building(state, "d_theirs", "house", Coord(1, 0), owner="z")
+    building(state, "e_site", "house", Coord(1, 1), complete=False)
+    house = view_of(registry, state).house_for(a)
+    assert house is not None and house.id == "z_near"
+    building(state, "b_tie", "house", Coord(0, 3))
+    house = view_of(registry, state).house_for(a)
+    assert house is not None and house.id == "b_tie"
+    del state.buildings["b_tie"]
+    del state.buildings["z_near"]
+    del state.buildings["a_far"]
+    house = view_of(registry, state).house_for(a)
+    assert house is not None and house.id == "c_mine"
+
+
+def test_house_for_follows_a_partner_into_their_personal_house(
+    registry: Registry, make_world: MakeWorld
+) -> None:
+    """AC1: a villager may move into a house owned by their partner, and keeps their own bed."""
+    a = Villager("a", "A", Coord(0, 0), partner="b", home="p")
+    b = Villager("b", "B", Coord(0, 0), partner="a", home="p")
+    state = make_world(ROWS, [a, b])
+    building(state, "p", "house", Coord(5, 5), owner="b")
+    capacity = registry.buildings["house"].housing
+    for i in range(capacity):
+        state.villagers[f"x{i}"] = Villager(f"x{i}", "X", Coord(0, 0), home="p")
+    house = view_of(registry, state).house_for(a)
+    assert house is not None and house.id == "p"
+    assert view_of(registry, state).house_for(Villager("n", "N", Coord(0, 0))) is None
+
+
+def test_housing_shortfall_counts_free_communal_beds_and_can_go_negative(
+    registry: Registry, make_world: MakeWorld
+) -> None:
+    """AC1: occupied beds, personal houses and surplus beds all shift the shortfall."""
+    capacity = registry.buildings["house"].housing
+    a = Villager("a", "A", Coord(0, 0), home="c1")
+    b = Villager("b", "B", Coord(0, 0), home="p1")
+    c = Villager("c", "C", Coord(0, 0))
+    state = make_world(ROWS, [a, b, c])
+    building(state, "c1", "house", Coord(2, 2))
+    building(state, "p1", "house", Coord(6, 6), owner="b")
+    view = view_of(registry, state)
+    assert view.housing_shortfall() == 1 - (capacity - 1)
+    building(state, "c2", "house", Coord(8, 2), complete=False)
+    building(state, "f1", "farm", Coord(2, 8))
+    assert view_of(registry, state).housing_shortfall() == 1 - (capacity - 1) - capacity
+    assert view_of(registry, state).housing_shortfall() < 0
+
+
+def test_free_origin_breaks_ties_by_row_then_column(
+    registry: Registry, make_world: MakeWorld
+) -> None:
+    """AC1: of equally near clear origins the topmost, then leftmost, is taken."""
+    state = make_world(ROWS)
+    centre = state.tilemap.start()
+    state.nodes["n0"] = Node("n0", "berry_bush", centre, 5)
+    view = view_of(registry, state, site_search_radius=3, site_gap=0)
+    assert view.free_origin("house") == Coord(centre.x + 1, centre.y)
+    assert view.free_origin("house") == Coord(centre.x + 1, centre.y)
