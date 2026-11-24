@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import heapq
+import math
 from collections.abc import Callable, Sequence
 from typing import Protocol
 
@@ -49,38 +50,56 @@ def _in_bounds(field: CostField, c: Coord) -> bool:
 
 
 def find_path(field: CostField, start: Coord, goal: Coord) -> list[Coord] | None:
+    """A* over 4-neighbours; ties break on (f, h, tile) with tiles ordered as `Coord` (x, y).
+
+    Tiles are keyed `x * height + y`, which orders exactly as `Coord`; neighbours off the map
+    are skipped (a cost field is impassable there). Each tile's cost is asked once.
+    """
     if not (_in_bounds(field, start) and _in_bounds(field, goal)):
         return None
     if start == goal:
         return [start]
     if field.cost(goal) is None:
         return None
-    best: dict[Coord, float] = {start: 0.0}
-    came_from: dict[Coord, Coord] = {}
-    closed: set[Coord] = set()
-    frontier: list[tuple[float, float, Coord]] = [(0.0, 0.0, start)]
+    width, height, min_cost = field.width, field.height, field.min_cost
+    gx, gy = goal
+    target = gx * height + gy
+    origin = start.x * height + start.y
+    costs: dict[int, float | None] = {}
+    best: dict[int, float] = {origin: 0.0}
+    came_from: dict[int, int] = {}
+    closed: set[int] = set()
+    frontier: list[tuple[float, float, int]] = [(0.0, 0.0, origin)]
     while frontier:
         _, _, current = heapq.heappop(frontier)
         if current in closed:
             continue
-        if current == goal:
-            path = [current]
+        if current == target:
+            keys = [current]
             while current in came_from:
                 current = came_from[current]
-                path.append(current)
-            return path[::-1]
+                keys.append(current)
+            return [Coord(k // height, k % height) for k in reversed(keys)]
         closed.add(current)
-        for nb in current.neighbours4():
+        x, y = divmod(current, height)
+        here = best[current]
+        for nx, ny in ((x, y - 1), (x + 1, y), (x, y + 1), (x - 1, y)):
+            if not (0 <= nx < width and 0 <= ny < height):
+                continue
+            nb = nx * height + ny
             if nb in closed:
                 continue
-            step = field.cost(nb)
+            if nb in costs:
+                step = costs[nb]
+            else:
+                step = costs[nb] = field.cost(Coord(nx, ny))
             if step is None:
                 continue
-            cost = best[current] + step
-            if cost < best.get(nb, float("inf")):
+            cost = here + step
+            if cost < best.get(nb, math.inf):
                 best[nb] = cost
                 came_from[nb] = current
-                h = nb.manhattan(goal) * field.min_cost
+                h = (abs(nx - gx) + abs(ny - gy)) * min_cost
                 heapq.heappush(frontier, (cost + h, h, nb))
     return None
 

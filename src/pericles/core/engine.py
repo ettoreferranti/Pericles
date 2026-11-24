@@ -61,7 +61,7 @@ class Engine:
             ProposeCouple: partial(lifecycle.propose_couple, self.context),
             AcceptCouple: partial(lifecycle.accept_couple, self.context),
         }
-        self._cache: tuple[TileMap, frozenset[Coord], TerrainCostField] | None = (
+        self._cache: tuple[TileMap, tuple[tuple[str, str, Coord], ...], TerrainCostField] | None = (
             None  # pragma: no mutate - cache sentinel; any non-matching value just forces a rebuild
         )
 
@@ -139,13 +139,17 @@ class Engine:
                 work.complete(self.context, state, villager, sink)
 
     def _cost_field(self, state: WorldState) -> TerrainCostField:
-        """Cached per tilemap object and blocked-tile set (ADR-0014 §7)."""
-        blocked = construction.blocked_tiles(self.context, state)
+        """Cached per tilemap object and building layout (ADR-0014 §7).
+
+        Blocked tiles depend only on each building's id, kind and origin, none of which change
+        once it is placed, so the layout is the cache key."""
+        layout = tuple((b.id, b.kind, b.origin) for b in state.buildings.values())
         cache = self._cache
-        if cache is not None and cache[0] is state.tilemap and cache[1] == blocked:
+        if cache is not None and cache[0] is state.tilemap and cache[1] == layout:
             return cache[2]
+        blocked = construction.blocked_tiles(self.context, state)
         field = TerrainCostField(state.tilemap, self.registry, blocked.__contains__)
-        self._cache = (state.tilemap, blocked, field)
+        self._cache = (state.tilemap, layout, field)
         return field
 
     def _move_to(self, state: WorldState, intent: Intent, sink: EventSink) -> None:

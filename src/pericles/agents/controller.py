@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import Any, Protocol
 
-from pericles.agents.config import RELIEFS, AgentConfig
+from pericles.agents.config import AgentConfig
 from pericles.agents.view import Decision, Memory, NodeIndex, OriginCache, View
 from pericles.core.context import Context
 from pericles.core.events import Event
@@ -96,7 +96,7 @@ class Controller:
                 continue
             if _redundant(villager, decision.intent):
                 continue
-            memory.target, memory.job = decision.target, decision.job
+            view.remember(vid, memory, decision.target, decision.job)
             if isinstance(decision.intent, Wait):
                 memory.idle_until = state.tick + self.config.idle_ticks
                 continue
@@ -106,7 +106,7 @@ class Controller:
     def _due(self, view: View, villager: Villager, memory: Memory) -> bool:
         if view.tick < memory.idle_until:
             return False
-        if any(view.level(villager, r) >= self.config.urgent_at[r] for r in RELIEFS):
+        if view.urgent(villager):
             return True
         return not villager.path and villager.activity is None
 

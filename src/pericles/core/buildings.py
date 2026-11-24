@@ -91,6 +91,16 @@ def near(pos: Coord, tiles: Iterable[Coord]) -> bool:
     return any(pos.manhattan(tile) <= 1 for tile in tiles)
 
 
+def near_footprint(pos: Coord, origin: Coord, size: tuple[int, int]) -> bool:
+    """`near(pos, footprint(origin, size))` without listing the tiles."""
+    width, height = size
+    if width <= 0 or height <= 0:
+        return False
+    dx = max(origin.x - pos.x, 0, pos.x - (origin.x + width - 1))
+    dy = max(origin.y - pos.y, 0, pos.y - (origin.y + height - 1))
+    return dx + dy <= 1
+
+
 def remaining_cost(building: Building, registry: Registry) -> dict[str, int]:
     cost = registry.buildings[building.kind].cost
     return {

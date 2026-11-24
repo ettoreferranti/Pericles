@@ -7,7 +7,7 @@ from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
-from pericles.agents.config import AgentConfig
+from pericles.agents.config import RELIEFS, AgentConfig
 from pericles.core.buildings import Building, building_tiles, footprint, near, remaining_cost
 from pericles.core.construction import blocked_tiles
 from pericles.core.context import Context
@@ -167,6 +167,16 @@ class View:
         self._housing_shortfall: int | None = None
         self._storage_shortfall: float | None = None
         self._center: Coord | None = None
+        self._food: dict[str, float] = {}
+        self._jobs: Counter[str] | None = None
+        self._producing: dict[str, frozenset[str]] = {}
+        self._houses: list[Building] | None = None
+        self._family: dict[tuple[str, str], Building | None] = {}
+        self._urgent = [
+            (need, config.urgent_at[relief])
+            for relief in RELIEFS
+            for need in self._relief.get(relief, ())
+        ]
 
     @property
     def tick(self) -> int:
@@ -174,6 +184,12 @@ class View:
 
     def level(self, villager: Villager, relief: str) -> float:
         return max((villager.needs.get(n, 0.0) for n in self._relief.get(relief, ())), default=0.0)
+
+    def urgent(self, villager: Villager) -> bool:
+        """True if any relief's `level` is at or past its `urgent_at`. A relief no need
+        uses has level 0, below every `urgent_at` (levels are positive, `AgentConfig`)."""
+        needs = villager.needs
+        return any(needs.get(need, 0.0) >= at for need, at in self._urgent)
 
     def avoided(self, villager: Villager, target: str) -> bool:
         memory = self.memory.get(villager.id)
@@ -300,6 +316,9 @@ class View:
     def stored_food(self, villager: Villager) -> float:
         """Nutrition in the stores `villager` can fetch from (`stores`): complete buildings
         with storage it may use and does not avoid. Summed in id and item order."""
+        known = self._food.get(villager.id)
+        if known is not None:
+            return known
         usable = self._usable_stores(villager)
         key = tuple(b.id for b in usable)
         if key not in self._stored:
@@ -309,24 +328,48 @@ class View:
                 for building in usable
                 for item, qty in sorted(building.storage.totals().items())
             )
+        self._food[villager.id] = self._stored[key]
         return self._stored[key]
 
     def food_target(self) -> float:
         return self.config.food_reserve_per_capita * self.population()
 
+    def _job_counts(self) -> Counter[str]:
+        """Living villagers per remembered job; kept current by `remember`."""
+        if self._jobs is None:
+            villagers = self.state.villagers
+            self._jobs = Counter(
+                m.job for vid, m in self.memory.items() if m.job is not None and vid in villagers
+            )
+        return self._jobs
+
+    def _producers(self, item: str) -> frozenset[str]:
+        """The actions with `item` among their outputs."""
+        found = self._producing.get(item)
+        if found is None:
+            actions = self.ctx.registry.actions
+            found = frozenset(a for a in actions if item in actions[a].outputs)
+            self._producing[item] = found
+        return found
+
+    def remember(self, vid: str, memory: Memory, target: str | None, job: str | None) -> None:
+        """Record a decision's target and job in `memory` (minds' one write while deciding)."""
+        if self._jobs is not None and vid in self.state.villagers:
+            if memory.job is not None:
+                self._jobs[memory.job] -= 1
+            if job is not None:
+                self._jobs[job] += 1
+        memory.target, memory.job = target, job
+
     def workers(self, item: str, exclude: str) -> int:
-        actions = self.ctx.registry.actions
-        return len(
-            [
-                vid
-                for vid, memory in self.memory.items()
-                if vid != exclude
-                and memory.job is not None
-                and memory.job in actions
-                and item in actions[memory.job].outputs
-                and vid in self.state.villagers
-            ]
-        )
+        """Living villagers other than `exclude` whose remembered job produces `item`."""
+        producers = self._producers(item)
+        counts = self._job_counts()
+        total = sum(counts[job] for job in producers)
+        mine = self.memory.get(exclude)
+        if mine is not None and mine.job in producers and exclude in self.state.villagers:
+            total -= 1
+        return total
 
     def builders(self, site_id: str, exclude: str) -> int:
         return sum(
@@ -392,16 +435,30 @@ class View:
         partner = self.state.villagers.get(villager.partner) if villager.partner else None
         if partner is None:
             return None
-        homes = {villager.home, partner.home}
-        options = sorted(
-            (
+        pair = (min(villager.id, partner.id), max(villager.id, partner.id))
+        if pair not in self._family:
+            homes = {villager.home, partner.home}
+            options = sorted(
+                (
+                    b
+                    for b in self._housing()
+                    if b.id not in homes and self._fits_pair(b, villager, partner)
+                ),
+                key=self._pair_rank(villager, partner),
+            )
+            self._family[pair] = options[0] if options else None
+        return self._family[pair]
+
+    def _housing(self) -> list[Building]:
+        """Complete buildings with beds, in building order: the only ones a pair fits."""
+        if self._houses is None:
+            registry = self.ctx.registry
+            self._houses = [
                 b
                 for b in self.state.buildings.values()
-                if b.id not in homes and self._fits_pair(b, villager, partner)
-            ),
-            key=self._pair_rank(villager, partner),
-        )
-        return options[0] if options else None
+                if b.complete and registry.buildings[b.kind].housing > 0
+            ]
+        return self._houses
 
     def couple_house(self, villager: Villager) -> Building | None:
         """Where a housed couple should live; both partners compute the same house.

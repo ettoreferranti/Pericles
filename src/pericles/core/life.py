@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-from pericles.core.buildings import building_tiles, near
+from pericles.core.buildings import near_footprint
 from pericles.core.content.schema import NeedDef
 from pericles.core.context import Context, reject
 from pericles.core.events import EventSink
@@ -68,7 +68,7 @@ def at_home(ctx: Context, state: WorldState, villager: Villager) -> bool:
     return (
         home is not None
         and home.complete
-        and near(villager.pos, building_tiles(home, ctx.registry))
+        and near_footprint(villager.pos, home.origin, ctx.registry.buildings[home.kind].footprint)
     )
 
 
