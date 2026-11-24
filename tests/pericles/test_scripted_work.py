@@ -219,3 +219,20 @@ def test_scripted_villagers_supply_a_site(registry: Registry, make_world: MakeWo
             break
     assert remaining_cost(building, registry) == {}
     assert all(v in state.villagers for v in ("v0", "v1", "v2"))
+
+
+def test_demand_tables_differ_with_the_food_each_villager_can_fetch(
+    registry: Registry, make_world: MakeWorld
+) -> None:
+    """AC1: villagers who can fetch different food see different food demand in one tick."""
+    a, b = Villager("a", "A", Coord(0, 0)), Villager("b", "B", Coord(0, 0))
+    state = make_world(ROWS, [a, b])
+    theirs = Building("h", "house", Coord(5, 5), Ownership("personal", ("b",)), complete=True)
+    theirs.storage.add(registry, "berries", 2)
+    state.buildings["h"] = theirs
+    view = view_of(registry, state, food_reserve_per_capita=100.0)
+    first, second = rules.demands(view, a), rules.demands(view, b)
+    assert first["berries"] == 1.0 and second["berries"] == pytest.approx(0.85)
+    assert rules.demands(view, a) is first
+    assert set(first) == set(registry.items)
+    assert all(first[i] == second[i] for i in registry.items if registry.items[i].nutrition <= 0)

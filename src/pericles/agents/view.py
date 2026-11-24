@@ -195,7 +195,7 @@ class View:
         self._targets: Counter[tuple[str | None, str]] | None = None
         self._producing: dict[str, frozenset[str]] = {}
         self._houses: list[tuple[Building, int]] | None = None
-        self._family: dict[tuple[str, str], Building | None] = {}
+        self._family: dict[tuple[str, ...], Building | None] = {}
         self._urgent = [
             (need, config.urgent_at[relief])
             for relief in RELIEFS
@@ -506,7 +506,7 @@ class View:
         partner = self.state.villagers.get(villager.partner) if villager.partner else None
         if partner is None:
             return None
-        pair = (min(villager.id, partner.id), max(villager.id, partner.id))
+        pair = tuple(sorted((villager.id, partner.id)))
         if pair not in self._family:
             # Neither partner lives in the candidate, so `_fits_pair` reduces to free beds.
             homes = {villager.home, partner.home}

@@ -56,11 +56,6 @@ def rate_table(ctx: Context, state: WorldState) -> RateTable:
     return rate
 
 
-def need_rate(ctx: Context, state: WorldState, villager: Villager, need: NeedDef) -> float:
-    """The need's per-hour rate after world, season and trait modifiers."""
-    return rate_table(ctx, state)(villager, need)
-
-
 def at_home(ctx: Context, state: WorldState, villager: Villager) -> bool:
     if villager.home is None:
         return False

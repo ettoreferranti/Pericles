@@ -410,6 +410,9 @@ def test_urgent_is_any_relief_at_or_past_its_urgent_level(
     assert view.urgent(a)
     a.needs = {"fatigue": view.config.urgent_at["sleep"]}
     assert view.urgent(a)
+    low = {"eat": 0.5, "sleep": 0.5, "shelter": 0.5}
+    a.needs = {}
+    assert not view_of(registry, state, act_at=low, urgent_at=low, warm_until=0.0).urgent(a)
 
 
 def test_stored_food_and_food_demand_are_per_villager(
@@ -502,3 +505,34 @@ def test_free_origins_kept_across_ticks_follow_new_buildings(
     second = View(ctx, state, config, index, {}, origins).free_origin("house")
     assert second is not None and second != first
     assert second == View(ctx, state, config, index, {}).free_origin("house")
+
+
+def test_family_houses_are_kept_per_couple(registry: Registry, make_world: MakeWorld) -> None:
+    """AC1: each couple gets the house nearest to both of them, asked in either order."""
+    ann = Villager("ann", "A", Coord(0, 0), partner="bob", home="h0")
+    bob = Villager("bob", "B", Coord(0, 0), partner="ann", home="h0")
+    cat = Villager("cat", "C", Coord(11, 11), partner="dan", home="h0")
+    dan = Villager("dan", "D", Coord(11, 11), partner="cat", home="h0")
+    state = make_world(ROWS, [ann, bob, cat, dan])
+    building(state, "h0", "house", Coord(5, 0))
+    building(state, "h1", "house", Coord(1, 1))
+    building(state, "h2", "house", Coord(9, 9))
+    view = view_of(registry, state)
+    found = [view.family_house(v) for v in (dan, ann, bob, cat)]
+    assert [h.id if h else None for h in found] == ["h2", "h1", "h1", "h2"]
+
+
+def test_couple_house_apart_takes_a_partner_home_either_may_use(
+    registry: Registry, make_world: MakeWorld
+) -> None:
+    """AC1: apart, a couple settles in a home one partner owns, though the other does not."""
+    a = Villager("a", "A", Coord(0, 0), partner="b", home="h0")
+    b = Villager("b", "B", Coord(0, 0), partner="a", home="h1")
+    state = make_world(ROWS, [a, b])
+    building(state, "h0", "house", Coord(1, 1), owner="a")
+    building(state, "h1", "house", Coord(9, 9), owner="b")
+    view = view_of(registry, state)
+    assert [view.couple_house(v).id for v in (a, b)] == ["h0", "h0"]  # type: ignore[union-attr]
+    state.villagers["a"].pos = state.villagers["b"].pos = Coord(10, 10)
+    view = view_of(registry, state)
+    assert [view.couple_house(v).id for v in (a, b)] == ["h1", "h1"]  # type: ignore[union-attr]

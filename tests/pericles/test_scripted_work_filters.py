@@ -178,7 +178,7 @@ def test_utility_shares_demand_among_the_others_on_an_output(
     view = view_of(custom, state, memory)
     chop = custom.actions["chop"]
     expected = 1.0 / 2 * (1.0 + 50.0 / view.ctx.config.max_skill)
-    assert rules.utility(view, a, chop) == pytest.approx(expected)
+    assert rules.utility(view, a, chop, rules.demands(view, a)) == pytest.approx(expected)
 
 
 def test_deliver_targets_the_site(custom: Registry, make_world: MakeWorld) -> None:

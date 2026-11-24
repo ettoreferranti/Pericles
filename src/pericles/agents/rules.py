@@ -185,15 +185,10 @@ def demand(view: View, villager: Villager, item: str) -> float:
 
 
 def utility(
-    view: View, villager: Villager, action: ActionDef, demands: Mapping[str, float] | None = None
+    view: View, villager: Villager, action: ActionDef, demands: Mapping[str, float]
 ) -> float:
-    """Best output demand, shared among its workers, times skill; `demands` may hold the
-    villager's `demand` per item already."""
-
-    def wants(item: str) -> float:
-        return demands[item] if demands is not None else demand(view, villager, item)
-
-    best = max(wants(item) / (1 + view.workers(item, villager.id)) for item in action.outputs)
+    """Best output demand (`demands`, the villager's), shared among its workers, times skill."""
+    best = max(demands[item] / (1 + view.workers(item, villager.id)) for item in action.outputs)
     return best * skill_score(view, villager, action)
 
 
