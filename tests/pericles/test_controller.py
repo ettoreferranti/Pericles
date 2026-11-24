@@ -380,3 +380,14 @@ def test_work_the_engine_stops_is_a_failure(registry: Registry, make_world: Make
     ctl.observe(state, [interrupted("a", "engine"), interrupted("b", "engine")])
     assert ctl.memory["a"].avoid == {"n7": 3 + config.avoid_ticks}
     assert ctl.memory["b"].idle_until == 3 + config.idle_ticks
+
+
+@pytest.mark.req("REQ-AGT-008")
+def test_other_events_change_nothing(registry: Registry, make_world: MakeWorld) -> None:
+    """AC1: events that are not failures leave memory untouched."""
+    state = make_world(ROWS, [Villager("a", "A", Coord(0, 0))])
+    ctl = controller(registry, Script(walk))
+    ctl.intents(state)
+    before = ctl.to_dict()
+    ctl.observe(state, [Event(0, 0, "stopped", {"actor": "a", "at": [0, 0]})])
+    assert ctl.to_dict() == before
