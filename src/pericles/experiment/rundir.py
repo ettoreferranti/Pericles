@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import platform
+import re
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -45,6 +46,9 @@ class Snapshot:
     agents: dict[str, Any]
 
 
+SNAPSHOT_NAME = re.compile(r"tick-(\d{10})\.json")
+
+
 class RunDirectoryError(Exception):
     """A run directory is missing, foreign or would be overwritten."""
 
@@ -71,8 +75,10 @@ class RunDirectory:
             "created_utc": datetime.now(UTC).isoformat(),
         }
         _write_durably(path / "meta.json", json.dumps(meta, indent=2))
-        (path / "snapshots").mkdir()
-        (path / "llm_cache").mkdir()
+        for name in ("snapshots", "llm_cache"):
+            (path / name).mkdir()
+            _fsync_dir(path / name)
+        _fsync_dir(path)
         run = cls(path)
         _ = run.event_log
         return run
@@ -108,24 +114,36 @@ class RunDirectory:
             self._event_log = EventLog(self.path / "events.sqlite")
         return self._event_log
 
-    def _snapshot_path(self, tick: int) -> Path:
+    def snapshot_path(self, tick: int) -> Path:
         return self.path / "snapshots" / f"tick-{tick:010d}.json"
 
     def save_snapshot(self, state: WorldState, agents: Mapping[str, Any] | None = None) -> Path:
-        target = self._snapshot_path(state.tick)
+        target = self.snapshot_path(state.tick)
         payload = {"world": state.to_dict(), "agents": dict(agents or {})}
         _write_durably(target, canonical_json(payload))
         return target
 
+    def _snapshot_files(self) -> tuple[list[int], list[Path]]:
+        """Ticks of well-named snapshot files, and the stray `tick-*.json` names."""
+        ticks: list[int] = []
+        strays: list[Path] = []
+        for path in sorted((self.path / "snapshots").glob("tick-*.json")):
+            match = SNAPSHOT_NAME.fullmatch(path.name)
+            if match:
+                ticks.append(int(match.group(1)))
+            else:
+                strays.append(path)
+        return sorted(ticks), strays
+
     def snapshot_ticks(self) -> list[int]:
-        return sorted(
-            int(p.stem.removeprefix("tick-")) for p in (self.path / "snapshots").glob("tick-*.json")
-        )
+        return self._snapshot_files()[0]
 
     def snapshots(self) -> Iterator[Snapshot]:
         """Usable snapshots, newest first; unreadable or mislabelled ones go to `skipped`."""
-        for tick in reversed(self.snapshot_ticks()):
-            path = self._snapshot_path(tick)
+        ticks, strays = self._snapshot_files()
+        self.skipped.extend(strays)
+        for tick in reversed(ticks):
+            path = self.snapshot_path(tick)
             try:
                 payload = json.loads(path.read_text(encoding="utf-8"))
                 snapshot = Snapshot(tick, dict(payload["world"]), dict(payload["agents"]))

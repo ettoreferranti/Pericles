@@ -1,5 +1,6 @@
 import os
-from collections.abc import Sequence
+import shutil
+from collections.abc import Iterator, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -15,11 +16,32 @@ from pericles.core.intents import Intent, MoveTo
 from pericles.core.mapgen import TileMap
 from pericles.core.nodes import Node
 from pericles.core.state import Villager, WorldState
+from pericles.experiment import rundir as rundir_module
 from pericles.experiment.defaults import default_config
 from pericles.experiment.rundir import RunDirectory, RunDirectoryError
 from pericles.experiment.runner import IntentSource, SourceAgents, resume, run
 
 pytestmark = pytest.mark.req("REQ-EXP-003")
+
+
+@pytest.fixture(autouse=True)
+def close_run_directories(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """Close every RunDirectory a test creates or opens, so no sqlite handle leaks."""
+    opened: list[RunDirectory] = []
+    for name in ("create", "open"):
+        original = getattr(RunDirectory, name).__func__
+
+        def tracked(
+            cls: type[RunDirectory], /, *args: Any, _o: Any = original, **kw: Any
+        ) -> RunDirectory:
+            made: RunDirectory = _o(cls, *args, **kw)
+            opened.append(made)
+            return made
+
+        monkeypatch.setattr(RunDirectory, name, classmethod(tracked))
+    yield
+    for made in opened:
+        made.close()
 
 
 def initial(small_map: TileMap, registry: Registry) -> tuple[WorldState, list[Coord]]:
@@ -179,34 +201,40 @@ def village(registry: Registry, small_map: TileMap) -> WorldState:
 def test_resume_matches_a_run_that_never_stopped(
     tmp_path: Path, registry: Registry, small_map: TileMap
 ) -> None:
-    """AC3: crash and resume give the same event log as an uninterrupted run, agents included."""
+    """AC3: crash and resume give the same log, world and agent memory as an uninterrupted run."""
     engine = Engine(registry, default_config())
+    straight_agents = scripted_controller(engine.context, AgentConfig())
     straight = RunDirectory.create(tmp_path / "a", {"seed": 4}, seed=4)
-    run(
-        straight,
-        engine,
-        village(registry, small_map),
-        scripted_controller(engine.context, AgentConfig()),
-        600,
-        100,
-    )
+    straight_final = run(straight, engine, village(registry, small_map), straight_agents, 600, 50)
     crashed = RunDirectory.create(tmp_path / "b", {"seed": 4}, seed=4)
     run(
         crashed,
         engine,
         village(registry, small_map),
         scripted_controller(engine.context, AgentConfig()),
-        350,
-        100,
+        60,
+        50,
     )
     crashed.close()
-    reopened = RunDirectory.open(tmp_path / "b")
-    state, agents = resume(reopened)
-    assert state.tick == 300
-    controller = scripted_controller(Engine(registry, default_config()).context, AgentConfig())
-    controller.load(agents)
-    run(reopened, Engine(registry, default_config()), state, controller, 600, 100)
-    assert reopened.event_log.digest() == straight.event_log.digest()
+    digests = []
+    for load in (True, False):
+        copy = tmp_path / f"copy-{load}"
+        shutil.copytree(tmp_path / "b", copy)
+        reopened = RunDirectory.open(copy)
+        state, agents = resume(reopened)
+        assert state.tick == 50
+        controller = scripted_controller(Engine(registry, default_config()).context, AgentConfig())
+        if load:
+            controller.load(agents)
+        final = run(reopened, Engine(registry, default_config()), state, controller, 600, 50)
+        if load:
+            assert reopened.event_log.digest() == straight.event_log.digest()
+            assert final.digest() == straight_final.digest()
+            assert controller.to_dict() == straight_agents.to_dict()
+        digests.append(reopened.event_log.digest())
+        reopened.close()
+    assert digests[1] != straight.event_log.digest()  # without the memory the run diverges
+    straight.close()
 
 
 def test_resume_skips_corrupt_and_mismatched_snapshots(
@@ -344,3 +372,65 @@ def test_resume_boundary_with_the_log(
     empty.save_snapshot(other)
     with pytest.raises(RunDirectoryError, match="no usable snapshot"):
         resume(empty)
+
+
+def test_resume_skips_a_snapshot_one_tick_ahead_of_the_log(
+    tmp_path: Path, registry: Registry, small_map: TileMap
+) -> None:
+    """AC2/AC3: with ticks 0-18 logged, the snapshot at 20 (needing 0-19) is not used."""
+    state, walkable = initial(small_map, registry)
+    run_dir = RunDirectory.create(tmp_path / "run", {"seed": 4}, seed=4)
+    run(run_dir, Engine(registry), state, SourceAgents(source_for(walkable)), 20, 10)
+    run_dir.event_log.truncate_after(18)
+    resumed, _ = resume(run_dir)
+    assert resumed.tick == 10
+    assert [p.name for p in run_dir.skipped] == ["tick-0000000020.json"]
+    run_dir.close()
+
+
+def test_stray_snapshot_names_are_skipped_not_fatal(
+    tmp_path: Path, registry: Registry, small_map: TileMap
+) -> None:
+    """AC3: files that are not exactly tick-%010d.json are reported and ignored."""
+    state, walkable = initial(small_map, registry)
+    run_dir = RunDirectory.create(tmp_path / "run", {"seed": 4}, seed=4)
+    run(run_dir, Engine(registry), state, SourceAgents(source_for(walkable)), 10, 10)
+    snaps = run_dir.path / "snapshots"
+    (snaps / "tick-old.json").write_text("{}", encoding="utf-8")
+    (snaps / "tick-10.json").write_text("{}", encoding="utf-8")
+    assert run_dir.snapshot_ticks() == [0, 10]
+    resumed, _ = resume(run_dir)
+    assert resumed.tick == 10
+    assert {p.name for p in run_dir.skipped} == {"tick-old.json", "tick-10.json"}
+    run_dir.close()
+
+
+def test_the_final_snapshot_of_an_extinct_run_replaces_a_corrupt_file(
+    tmp_path: Path, life: Registry, small_map: TileMap
+) -> None:
+    """AC1/AC3: the end-of-run snapshot is always rewritten."""
+    state = WorldState.new(4, small_map, [Villager("v0", "V", small_map.start())])
+    first = RunDirectory.create(tmp_path / "first", {"seed": 4}, seed=4)
+    final = run(first, Engine(life), state, SourceAgents(lambda s: []), 10_000, 1000)
+    first.close()
+    again = RunDirectory.create(tmp_path / "again", {"seed": 4}, seed=4)
+    (again.path / "snapshots" / f"tick-{final.tick:010d}.json").write_text("{", encoding="utf-8")
+    state = WorldState.new(4, small_map, [Villager("v0", "V", small_map.start())])
+    run(again, Engine(life), state, SourceAgents(lambda s: []), 10_000, 1000)
+    snapshot = again.latest_snapshot()
+    assert snapshot is not None and snapshot.tick == final.tick
+    again.close()
+
+
+def test_create_fsyncs_its_directories(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """AC3: snapshots/ and llm_cache/ entries are durable once the run directory exists."""
+    synced: list[str] = []
+    real = rundir_module._fsync_dir
+
+    def spy(path: Path) -> None:
+        synced.append(path.name)
+        real(path)
+
+    monkeypatch.setattr(rundir_module, "_fsync_dir", spy)
+    RunDirectory.create(tmp_path / "run", {}, seed=1).close()
+    assert "snapshots" in synced and "llm_cache" in synced

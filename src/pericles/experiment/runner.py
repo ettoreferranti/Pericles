@@ -57,8 +57,7 @@ def run(
         run_dir.save_snapshot(state, agents.to_dict())
     while state.tick < until_tick:
         if stop_when_extinct and not state.villagers:
-            if state.tick not in run_dir.snapshot_ticks():
-                run_dir.save_snapshot(state, agents.to_dict())
+            run_dir.save_snapshot(state, agents.to_dict())
             break
         state, events = engine.step(state, agents.intents(state))
         agents.observe(state, events)
@@ -73,7 +72,7 @@ def resume(run_dir: RunDirectory) -> tuple[WorldState, dict[str, Any]]:
     last = run_dir.event_log.last_tick()
     logged = 0 if last is None else last + 1
     for snapshot in run_dir.snapshots():
-        path = run_dir.path / "snapshots" / f"tick-{snapshot.tick:010d}.json"
+        path = run_dir.snapshot_path(snapshot.tick)
         if snapshot.tick > logged:
             run_dir.skipped.append(path)
             continue
