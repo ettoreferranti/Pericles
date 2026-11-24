@@ -6,7 +6,7 @@ from collections.abc import Mapping, Sequence
 from typing import Any, Protocol
 
 from pericles.agents.config import RELIEFS, AgentConfig
-from pericles.agents.view import Decision, Memory, NodeIndex, View
+from pericles.agents.view import Decision, Memory, NodeIndex, OriginCache, View
 from pericles.core.context import Context
 from pericles.core.events import Event
 from pericles.core.intents import Construct, Intent, MoveTo, Sleep, StartAction, Wait
@@ -74,11 +74,12 @@ class Controller:
         self.memory: dict[str, Memory] = {}
         self.fallbacks = 0
         self._index: tuple[dict[str, Node], NodeIndex] | None = None
+        self._origins = OriginCache()
 
     def view(self, state: WorldState) -> View:
         if self._index is None or self._index[0] is not state.nodes:
             self._index = (state.nodes, NodeIndex(state.nodes.values(), self.config.index_cell))
-        return View(self.ctx, state, self.config, self._index[1], self.memory)
+        return View(self.ctx, state, self.config, self._index[1], self.memory, self._origins)
 
     def intents(self, state: WorldState) -> list[Intent]:
         self.memory = {vid: m for vid, m in self.memory.items() if vid in state.villagers}

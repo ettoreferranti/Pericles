@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 from pericles.core.buildings import building_tiles, near
 from pericles.core.content.schema import NeedDef
 from pericles.core.context import Context, reject
 from pericles.core.events import EventSink
 from pericles.core.intents import Eat, Intent, Sleep
-from pericles.core.modifiers import Modifier, resolve
+from pericles.core.modifiers import resolve
 from pericles.core.state import Activity, Villager, WorldState
 
 MINUTES_PER_HOUR = 60
@@ -18,24 +20,45 @@ def per_tick(ctx: Context, per_hour: float) -> float:
     return per_hour * ctx.config.calendar.tick_minutes / MINUTES_PER_HOUR
 
 
+RateTable = Callable[[Villager, NeedDef], float]
+
+
+def rate_table(ctx: Context, state: WorldState) -> RateTable:
+    """Need rates for this tick; cached by (need, traits) when no modifier names a villager.
+
+    Modifiers apply in the order world, season, traits, as `resolve` keeps list order.
+    """
+    season = ctx.config.calendar.season_at(state.tick)
+    shared = (*state.modifiers, *season.modifiers)
+    personal = any(m.scope.villager is not None for m in shared)
+    cache: dict[tuple[str, tuple[str, ...]], float] = {}
+
+    def rate(villager: Villager, need: NeedDef) -> float:
+        key = (need.id, villager.traits)
+        if not personal and key in cache:
+            return cache[key]
+        modifiers = list(shared)
+        for trait in villager.traits:
+            modifiers.extend(ctx.traits[trait])
+        value = resolve(
+            modifiers,
+            kind="need",
+            ident=need.id,
+            attribute="rate",
+            base=need.rate_per_hour,
+            tick=state.tick,
+            villager=villager.id,
+        ).value
+        if not personal:
+            cache[key] = value
+        return value
+
+    return rate
+
+
 def need_rate(ctx: Context, state: WorldState, villager: Villager, need: NeedDef) -> float:
     """The need's per-hour rate after world, season and trait modifiers."""
-    registry = ctx.registry
-    modifiers = list(state.modifiers)
-    modifiers.extend(ctx.config.calendar.season_at(state.tick).modifiers)
-    for trait in villager.traits:
-        modifiers.extend(
-            Modifier.from_def(m, f"trait:{trait}") for m in registry.traits[trait].modifiers
-        )
-    return resolve(
-        modifiers,
-        kind="need",
-        ident=need.id,
-        attribute="rate",
-        base=need.rate_per_hour,
-        tick=state.tick,
-        villager=villager.id,
-    ).value
+    return rate_table(ctx, state)(villager, need)
 
 
 def at_home(ctx: Context, state: WorldState, villager: Villager) -> bool:
@@ -54,7 +77,7 @@ def sleeping(villager: Villager) -> bool:
 
 
 def _hourly_change(
-    ctx: Context, state: WorldState, villager: Villager, need: NeedDef, home: bool
+    ctx: Context, rate: RateTable, villager: Villager, need: NeedDef, home: bool
 ) -> float:
     config = ctx.config
     if need.relief == "sleep" and sleeping(villager):
@@ -62,7 +85,7 @@ def _hourly_change(
         return -config.sleep_relief_per_hour * boost
     if need.relief == "shelter" and home:
         return -config.shelter_relief_per_hour
-    return need_rate(ctx, state, villager, need)
+    return rate(villager, need)
 
 
 def update_needs(ctx: Context, state: WorldState, sink: EventSink) -> list[tuple[str, str]]:
@@ -70,6 +93,7 @@ def update_needs(ctx: Context, state: WorldState, sink: EventSink) -> list[tuple
     config = ctx.config
     needs = [ctx.registry.needs[k] for k in sorted(ctx.registry.needs)]
     dying: list[tuple[str, str]] = []
+    rate = rate_table(ctx, state)
     for vid in sorted(state.villagers):
         villager = state.villagers[vid]
         home = at_home(ctx, state, villager)
@@ -77,7 +101,7 @@ def update_needs(ctx: Context, state: WorldState, sink: EventSink) -> list[tuple
         causes: list[str] = []
         for need in needs:
             before = villager.needs.get(need.id, 0.0)
-            change = per_tick(ctx, _hourly_change(ctx, state, villager, need, home))
+            change = per_tick(ctx, _hourly_change(ctx, rate, villager, need, home))
             level = min(need.critical, max(0.0, before + change))
             villager.needs[need.id] = level
             if level < need.critical:

@@ -14,7 +14,7 @@ from pericles.core.context import Context
 from pericles.core.geometry import Coord
 from pericles.core.intents import Intent, MoveTo
 from pericles.core.life import at_home
-from pericles.core.lifecycle import food_stock, occupants
+from pericles.core.lifecycle import food_stock
 from pericles.core.nodes import Node
 from pericles.core.state import Villager, WorldState
 
@@ -107,8 +107,26 @@ class NodeIndex:
         return best
 
 
+class OriginCache:
+    """Free site origins kept across ticks while the inputs `free_origin` reads are unchanged:
+    the tilemap, the nodes, the buildings (id, kind, origin) and the village centre."""
+
+    def __init__(self) -> None:
+        self.key: tuple[object, ...] | None = None
+        self.origins: dict[str, Coord | None] = {}
+
+    def lookup(self, key: tuple[object, ...]) -> dict[str, Coord | None]:
+        if key != self.key:
+            self.key, self.origins = key, {}
+        return self.origins
+
+
 class View:
-    """Per-tick, read-only queries for minds; results are cached for the tick."""
+    """Per-tick, read-only queries for minds; results are cached for the tick.
+
+    The world does not change while minds decide, so world-only queries are cached on first
+    use. Queries that read `memory` targets and jobs are not: minds update those as they go.
+    """
 
     def __init__(
         self,
@@ -117,6 +135,7 @@ class View:
         config: AgentConfig,
         index: NodeIndex,
         memory: Mapping[str, Memory],
+        origins: OriginCache | None = None,
     ) -> None:
         self.ctx = ctx
         self.state = state
@@ -138,8 +157,16 @@ class View:
         self._blocked: frozenset[Coord] | None = None
         self._needed: Counter[str] | None = None
         self._stock: float | None = None
-        self._stored: dict[str, float] = {}
-        self._origins: dict[str, Coord | None] = {}
+        self._stored: dict[tuple[str, ...], float] = {}
+        self._origin_cache = origins if origins is not None else OriginCache()
+        self._origins: dict[str, Coord | None] | None = None
+        self._occupancy: dict[str, int] | None = None
+        self._sites: list[Building] | None = None
+        self._storage: list[Building] | None = None
+        self._usable: dict[str, list[Building]] = {}
+        self._housing_shortfall: int | None = None
+        self._storage_shortfall: float | None = None
+        self._center: Coord | None = None
 
     @property
     def tick(self) -> int:
@@ -150,7 +177,10 @@ class View:
 
     def avoided(self, villager: Villager, target: str) -> bool:
         memory = self.memory.get(villager.id)
-        return memory is not None and memory.avoid.get(target, self.tick) > self.tick
+        if memory is None or not memory.avoid:
+            return False
+        tick = self.state.tick
+        return memory.avoid.get(target, tick) > tick
 
     def nearest_node(
         self, villager: Villager, kind: str, origin: Coord | None = None, radius: int | None = None
@@ -193,31 +223,64 @@ class View:
         home = self.state.buildings.get(villager.home) if villager.home is not None else None
         return home if home is not None and home.complete else None
 
+    def occupants(self, building_id: str) -> int:
+        """Residents plus their unborn children (`lifecycle.occupants`), counted once a tick."""
+        if self._occupancy is None:
+            table: dict[str, int] = {}
+            for v in self.state.villagers.values():
+                if v.home is not None:
+                    table[v.home] = table.get(v.home, 0) + beds_needed(v)
+            self._occupancy = table
+        return self._occupancy.get(building_id, 0)
+
     def at_home(self, villager: Villager) -> bool:
         return at_home(self.ctx, self.state, villager)
 
+    def _storehouses(self) -> list[Building]:
+        """Complete buildings with storage, by id."""
+        if self._storage is None:
+            registry = self.ctx.registry
+            self._storage = sorted(
+                (
+                    b
+                    for b in self.state.buildings.values()
+                    if b.complete and registry.buildings[b.kind].storage > 0
+                ),
+                key=lambda b: b.id,
+            )
+        return self._storage
+
+    def _usable_stores(self, villager: Villager) -> list[Building]:
+        """The stores `villager` may use and does not avoid, by id (avoidance is fixed while
+        minds decide: only `Controller.observe` changes it)."""
+        usable = self._usable.get(villager.id)
+        if usable is None:
+            usable = [
+                b
+                for b in self._storehouses()
+                if b.ownership.owned_by(villager.id) and not self.avoided(villager, b.id)
+            ]
+            self._usable[villager.id] = usable
+        return usable
+
     def stores(self, villager: Villager) -> list[Building]:
-        registry = self.ctx.registry
-        found = [
-            b
-            for b in self.state.buildings.values()
-            if b.complete
-            and registry.buildings[b.kind].storage > 0
-            and b.ownership.owned_by(villager.id)
-            and not self.avoided(villager, b.id)
-        ]
-        return sorted(found, key=lambda b: (villager.pos.manhattan(b.origin), b.id))
+        return sorted(
+            self._usable_stores(villager),
+            key=lambda b: (villager.pos.manhattan(b.origin), b.id),
+        )
 
     def room(self, building: Building) -> int:
         capacity = self.ctx.registry.buildings[building.kind].storage
         return capacity - sum(building.storage.totals().values())
 
     def sites(self) -> list[Building]:
-        return [
-            self.state.buildings[b]
-            for b in sorted(self.state.buildings)
-            if not self.state.buildings[b].complete
-        ]
+        if self._sites is None:
+            self._sites = [
+                self.state.buildings[b]
+                for b in sorted(self.state.buildings)
+                if not self.state.buildings[b].complete
+            ]
+        return self._sites
 
     def needed(self) -> Counter[str]:
         if self._needed is None:
@@ -237,14 +300,16 @@ class View:
     def stored_food(self, villager: Villager) -> float:
         """Nutrition in the stores `villager` can fetch from (`stores`): complete buildings
         with storage it may use and does not avoid. Summed in id and item order."""
-        if villager.id not in self._stored:
+        usable = self._usable_stores(villager)
+        key = tuple(b.id for b in usable)
+        if key not in self._stored:
             items = self.ctx.registry.items
-            self._stored[villager.id] = sum(
+            self._stored[key] = sum(
                 items[item].nutrition * qty
-                for building in sorted(self.stores(villager), key=lambda b: b.id)
+                for building in usable
                 for item, qty in sorted(building.storage.totals().items())
             )
-        return self._stored[villager.id]
+        return self._stored[key]
 
     def food_target(self) -> float:
         return self.config.food_reserve_per_capita * self.population()
@@ -292,7 +357,7 @@ class View:
             allowed = b.ownership.owned_by(villager.id) or (
                 partner is not None and b.ownership.owned_by(partner.id)
             )
-            room = villager.home == b.id or occupants(self.state, b.id) + incoming <= housing
+            room = villager.home == b.id or self.occupants(b.id) + incoming <= housing
             return b.complete and housing > 0 and allowed and room
 
         if partner is not None and partner.home in buildings and fits(buildings[partner.home]):
@@ -306,7 +371,7 @@ class View:
     def full(self, building: Building) -> bool:
         """True if every bed of `building` is taken."""
         housing = self.ctx.registry.buildings[building.kind].housing
-        return occupants(self.state, building.id) >= housing
+        return self.occupants(building.id) >= housing
 
     def _pair_rank(self, a: Villager, b: Villager) -> Callable[[Building], tuple[int, str]]:
         """The same order for both partners: summed distance, then id."""
@@ -317,9 +382,7 @@ class View:
         not counting the partners' own beds in it."""
         housing = self.ctx.registry.buildings[building.kind].housing
         allowed = building.ownership.owned_by(a.id) or building.ownership.owned_by(b.id)
-        others = occupants(self.state, building.id) - sum(
-            1 for v in (a, b) if v.home == building.id
-        )
+        others = self.occupants(building.id) - sum(1 for v in (a, b) if v.home == building.id)
         room = others + beds_needed(a) + beds_needed(b) + 1 <= housing
         return building.complete and allowed and room
 
@@ -396,13 +459,18 @@ class View:
 
         Negative when the village has more beds, built or planned, than it needs.
         """
+        if self._housing_shortfall is None:
+            self._housing_shortfall = self._count_housing_shortfall()
+        return self._housing_shortfall
+
+    def _count_housing_shortfall(self) -> int:
         homeless = sum(
             beds_needed(v) for v in self.state.villagers.values() if self.home(v) is None
         )
         homeless += self.crowded_couples()
         registry = self.ctx.registry
         free = sum(
-            registry.buildings[b.kind].housing - occupants(self.state, b.id)
+            registry.buildings[b.kind].housing - self.occupants(b.id)
             for b in self.state.buildings.values()
             if b.complete and b.ownership.kind == "communal" and registry.buildings[b.kind].housing
         )
@@ -410,12 +478,22 @@ class View:
         return homeless - free - building
 
     def storage_shortfall(self) -> float:
+        if self._storage_shortfall is None:
+            self._storage_shortfall = self._count_storage_shortfall()
+        return self._storage_shortfall
+
+    def _count_storage_shortfall(self) -> float:
         storage = self._communal("storage", complete=True) + self._communal(
             "storage", complete=False
         )
         return max(0.0, self.config.storage_per_capita * self.population() - storage)
 
     def center(self) -> Coord:
+        if self._center is None:
+            self._center = self._find_center()
+        return self._center
+
+    def _find_center(self) -> Coord:
         registry = self.ctx.registry
         stores = sorted(
             (
@@ -431,6 +509,11 @@ class View:
 
     def free_origin(self, kind: str) -> Coord | None:
         """The clear footprint origin nearest the village centre, with `site_gap` around it."""
+        if self._origins is None:
+            state = self.state
+            buildings = tuple((b.id, b.kind, b.origin) for b in state.buildings.values())
+            key = (state.tilemap, state.nodes, buildings, self.center())
+            self._origins = self._origin_cache.lookup(key)
         if kind in self._origins:
             return self._origins[kind]
         width, height = self.ctx.registry.buildings[kind].footprint
