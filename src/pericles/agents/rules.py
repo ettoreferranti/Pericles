@@ -339,3 +339,26 @@ def couple(view: View, villager: Villager) -> Decision | None:
         return None
     other = min(free, key=lambda o: (villager.pos.manhattan(o.pos), o.id))
     return Decision(ProposeCouple(villager.id, other.id), target=other.id)
+
+
+def child_eat(view: View, villager: Villager) -> Decision | None:
+    """Children eat what they hold or what a store holds; they forage separately, near family."""
+    if view.level(villager, EAT) < view.config.act_at[EAT]:
+        return None
+    return feed(view, villager)
+
+
+def follow(view: View, villager: Villager) -> Decision | None:
+    parent = view.guardian(villager)
+    if parent is None or view.avoided(villager, parent.id):
+        return None
+    if villager.pos.manhattan(parent.pos) <= view.config.child_follow_radius:
+        return None
+    step = view.go(villager, [parent.pos])
+    return None if step is None else Decision(step, target=parent.id)
+
+
+def forage(view: View, villager: Villager) -> Decision | None:
+    parent = view.guardian(villager)
+    origin = villager.pos if parent is None else parent.pos
+    return gather(view, villager, view.foods, origin=origin, radius=view.config.child_follow_radius)
