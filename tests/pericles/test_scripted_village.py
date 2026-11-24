@@ -14,7 +14,7 @@ from pericles.core.engine import Engine
 from pericles.core.geometry import Coord
 from pericles.core.intents import AcceptCouple, Construct, PlaceBuilding, ProposeCouple, SetHome
 from pericles.core.nodes import Node
-from pericles.core.state import Proposal, Villager, WorldState
+from pericles.core.state import Pregnancy, Proposal, Villager, WorldState
 from pericles.experiment.defaults import default_config
 
 pytestmark = pytest.mark.req("REQ-AGT-008")
@@ -318,3 +318,44 @@ def test_couple_decisions_name_their_target_and_respect_avoidance(
     avoid_m1 = {"a": Memory(avoid={"m1": 99})}
     decision = rules.couple(view_of(registry, state, avoid_m1), a)
     assert decision is not None and decision.intent == ProposeCouple("a", "m2")
+
+
+def test_a_pregnant_homeless_villager_needs_two_beds(
+    registry: Registry, make_world: MakeWorld
+) -> None:
+    """AC1: one free bed is not enough for a homeless villager who is expecting."""
+    a = Villager("a", "A", Coord(8, 8), sex="female", pregnancy=Pregnancy("b", 500))
+    state = make_world(ROWS, [a])
+    free_beds = registry.buildings["house"].housing
+    for i in range(free_beds - 1):  # fill all but one bed of a communal house
+        state.villagers[f"r{i}"] = Villager(f"r{i}", "R", Coord(0, 0), home="h0")
+    house(state, "h0", Coord(1, 1))
+    view = view_of(registry, state, storage_per_capita=0.0)
+    assert view.housing_shortfall() == 1
+    decision = rules.build(view, a)
+    assert decision is not None and decision.target == "place:house"
+
+
+def test_houses_come_before_storehouses(registry: Registry, make_world: MakeWorld) -> None:
+    """AC1: while housing is short or a house is unfinished, no storehouse is wanted."""
+    a, b = Villager("a", "A", Coord(8, 8)), Villager("b", "B", Coord(8, 8))
+    state = make_world(ROWS, [a, b])
+    taken = {"b": Memory(target="place:house")}
+    view = view_of(registry, state, taken, storage_per_capita=15.0)
+    assert view.housing_shortfall() > 0 and view.storage_shortfall() > 0
+    assert rules.wanted_building(view, a) is None
+    avoided = {"a": Memory(avoid={"place:house": 99})}
+    assert (
+        rules.wanted_building(view_of(registry, state, avoided, storage_per_capita=15.0), a) is None
+    )
+    # housed, but a house is still going up: still no storehouse
+    a.home, b.home = "h0", "h0"
+    house(state, "h0", Coord(1, 1))
+    state.buildings["s0"] = Building("s0", "house", Coord(12, 12), Ownership("communal"))
+    view = view_of(registry, state, storage_per_capita=15.0)
+    assert view.housing_shortfall() <= 0
+    assert rules.wanted_building(view, a) is None
+    del state.buildings["s0"]
+    assert (
+        rules.wanted_building(view_of(registry, state, storage_per_capita=15.0), a) == "storehouse"
+    )

@@ -247,19 +247,21 @@ COMMUNAL = "communal"
 
 
 def wanted_building(view: View, villager: Villager) -> str | None:
-    """The building kind the village lacks and nobody else is placing (ADR-0016 §4)."""
+    """The building kind the village lacks and nobody else is placing (ADR-0016 §4).
+
+    Houses come first: while housing is short, or a house is still going up, no store is wanted.
+    """
     config = view.config
-    wants = (
-        (config.house_building, view.housing_shortfall() > 0),
-        (config.store_building, view.storage_shortfall() > 0),
-    )
-    for kind, short in wants:
-        if (
-            short
-            and not view.placing(kind, villager.id)
-            and not view.avoided(villager, PLACE + kind)
-        ):
-            return kind
+
+    def claimable(kind: str) -> bool:
+        return not view.placing(kind, villager.id) and not view.avoided(villager, PLACE + kind)
+
+    if view.housing_shortfall() > 0:
+        return config.house_building if claimable(config.house_building) else None
+    if any(site.kind == config.house_building for site in view.sites()):
+        return None
+    if view.storage_shortfall() > 0 and claimable(config.store_building):
+        return config.store_building
     return None
 
 

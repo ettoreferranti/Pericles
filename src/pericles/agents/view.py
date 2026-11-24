@@ -22,6 +22,11 @@ PLACE = "place:"
 CONSTRUCT = "construct"
 
 
+def beds_needed(villager: Villager) -> int:
+    """Beds a villager takes when moving in: one, and one more for a child on the way."""
+    return 1 + (1 if villager.pregnancy is not None else 0)
+
+
 @dataclass
 class Memory:
     """What the controller remembers about one villager between ticks (ADR-0016 §2)."""
@@ -267,7 +272,7 @@ class View:
         registry = self.ctx.registry
         buildings = self.state.buildings
         partner = self.state.villagers.get(villager.partner) if villager.partner else None
-        incoming = 1 + (1 if villager.pregnancy is not None else 0)
+        incoming = beds_needed(villager)
 
         def fits(b: Building) -> bool:
             housing = registry.buildings[b.kind].housing
@@ -298,7 +303,9 @@ class View:
 
         Negative when the village has more beds, built or planned, than homeless villagers.
         """
-        homeless = sum(1 for v in self.state.villagers.values() if self.home(v) is None)
+        homeless = sum(
+            beds_needed(v) for v in self.state.villagers.values() if self.home(v) is None
+        )
         registry = self.ctx.registry
         free = sum(
             registry.buildings[b.kind].housing - occupants(self.state, b.id)
