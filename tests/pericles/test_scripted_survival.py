@@ -161,7 +161,7 @@ def test_gathering_prefers_the_most_skilled_job(registry: Registry, make_world: 
 
 
 def test_children_only_take_light_work(registry: Registry, make_world: MakeWorld) -> None:
-    """AC1: a hungry child gathers only jobs tagged for children, however skilled it is elsewhere."""
+    """AC1: a hungry child takes only child-tagged jobs, however skilled it is elsewhere."""
     kid = Villager(
         "a", "A", Coord(0, 0), needs={"hunger": EAT_AT}, skills={"fishing": 90.0}, adult=False
     )
