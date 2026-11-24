@@ -181,7 +181,10 @@ class RunDirectory:
         return target
 
     def read_metrics(self) -> list[Row]:
-        table = pq.read_table(self.path / METRICS)
+        path = self.path / METRICS
+        if not path.exists():
+            raise RunDirectoryError(f"{path}: no metrics yet; run or resume first")
+        table = pq.read_table(path)
         return [Row(int(r["day"]), str(r["metric"]), float(r["value"])) for r in table.to_pylist()]
 
     def close(self) -> None:

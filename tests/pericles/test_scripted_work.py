@@ -58,14 +58,14 @@ def test_demand_measures_food_shortfall_and_needed_materials(
     a = Villager("a", "A", Coord(0, 0))
     state = make_world(ROWS, [a])
     view = view_of(registry, state, food_reserve_per_capita=100.0)
-    assert rules.demand(view, "berries") == 1.0
-    assert rules.demand(view, "wood") == 0.0
+    assert rules.demand(view, a, "berries") == 1.0
+    assert rules.demand(view, a, "wood") == 0.0
     storehouse(state).storage.add(registry, "berries", 4)  # 60 nutrition of the 100 wanted
     site(state)
     view = view_of(registry, state, food_reserve_per_capita=100.0)
-    assert rules.demand(view, "berries") == pytest.approx(0.4)
-    assert rules.demand(view, "wood") == 1.0
-    assert rules.demand(view, "iron") == 0.0
+    assert rules.demand(view, a, "berries") == pytest.approx(0.4)
+    assert rules.demand(view, a, "wood") == 1.0
+    assert rules.demand(view, a, "iron") == 0.0
 
 
 def test_food_in_pockets_does_not_meet_the_village_demand(
@@ -77,13 +77,36 @@ def test_food_in_pockets_does_not_meet_the_village_demand(
     state = make_world(ROWS, [a])
     a.inventory.add(registry, "berries", 40)  # 600 nutrition, six times the reserve
     view = view_of(registry, state, food_reserve_per_capita=100.0)
-    assert rules.demand(view, "berries") == 1.0
+    assert rules.demand(view, a, "berries") == 1.0
     house = Building("h", "house", Coord(5, 5), Ownership("personal", ("a",)), complete=True)
     house.storage.add(registry, "berries", 2)
     state.buildings["h"] = house
     view = view_of(registry, state, food_reserve_per_capita=100.0)
-    assert rules.demand(view, "berries") == pytest.approx(0.7)
-    assert view.stored_food() == 30.0
+    assert rules.demand(view, a, "berries") == pytest.approx(0.7)
+    assert view.stored_food(a) == 30.0
+
+
+def test_stored_food_counts_only_stores_the_villager_may_use(
+    registry: Registry, make_world: MakeWorld
+) -> None:
+    """AC1: the food a villager counts is the food it could fetch: complete stores it may use."""
+    a, b = Villager("a", "A", Coord(0, 0)), Villager("b", "B", Coord(0, 0))
+    state = make_world(ROWS, [a, b])
+    theirs = Building("h", "house", Coord(5, 5), Ownership("personal", ("b",)), complete=True)
+    theirs.storage.add(registry, "berries", 2)
+    unfinished = Building("u", "storehouse", Coord(8, 8), Ownership("communal"))
+    unfinished.storage.add(registry, "berries", 3)
+    state.buildings.update({"h": theirs, "u": unfinished})
+    view = view_of(registry, state)
+    assert view.stored_food(a) == 0.0
+    assert view.stored_food(b) == 30.0
+    storehouse(state).storage.add(registry, "fish", 1)
+    storehouse_food = registry.items["fish"].nutrition
+    view = view_of(registry, state)
+    assert view.stored_food(a) == storehouse_food
+    assert view.stored_food(b) == 30.0 + storehouse_food
+    avoided = view_of(registry, state, {"a": Memory(avoid={"st": 99})})
+    assert avoided.stored_food(a) == 0.0
 
 
 def test_work_follows_skill_when_demands_tie(registry: Registry, make_world: MakeWorld) -> None:

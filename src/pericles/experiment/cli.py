@@ -50,9 +50,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         state = advance(session, args.days)
     finally:
         session.run_dir.close()
-    day = state.tick // session.experiment.engine.calendar.ticks_per_day
+    per_day = session.experiment.engine.calendar.ticks_per_day
     if state.villagers:
-        print(f"Day {day}: {len(state.villagers)} villagers.")
-    else:
-        print(f"The village died out on day {day}.")
+        print(f"Day {state.tick // per_day}: {len(state.villagers)} villagers.")
+    else:  # the last villager died during the tick before the current one
+        print(f"The village died out on day {(state.tick - 1) // per_day}.")
     return 0

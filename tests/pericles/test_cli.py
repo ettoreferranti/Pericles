@@ -100,4 +100,32 @@ def test_an_extinct_village_is_reported(tmp_path: Path, capsys: pytest.CaptureFi
     doomed["agents"] = {"act_at": never, "urgent_at": never, "warm_until": 10.0}
     doomed["run"]["days"] = 30
     assert main(["run", str(write(tmp_path, doomed)), "--out", str(tmp_path / "run")]) == 0
-    assert "died out on day" in capsys.readouterr().out
+    run_dir = RunDirectory.open(tmp_path / "run")
+    deaths = [e.tick for e in run_dir.event_log.events() if e.kind == "died"]
+    last = run_dir.event_log.last_tick()
+    run_dir.close()
+    assert len(deaths) == 1 and last == deaths[0]  # stopped on the tick the last one died
+    per_day = 144
+    assert last < doomed["run"]["days"] * per_day - 1  # early
+    assert f"The village died out on day {deaths[0] // per_day}." in capsys.readouterr().out
+
+
+def test_a_failed_resume_closes_the_run_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """AC3: resuming with no usable snapshot is reported and leaves no open event log."""
+    out = tmp_path / "run"
+    main(["run", str(write(tmp_path, TINY)), "--out", str(out), "--days", "1"])
+    for snapshot in (out / "snapshots").iterdir():
+        snapshot.unlink()
+    closed: list[Path] = []
+    original = RunDirectory.close
+
+    def close(self: RunDirectory) -> None:
+        closed.append(self.path)
+        original(self)
+
+    monkeypatch.setattr(RunDirectory, "close", close)
+    assert main(["resume", str(out)]) == 2
+    assert "no usable snapshot" in capsys.readouterr().err
+    assert closed == [out]

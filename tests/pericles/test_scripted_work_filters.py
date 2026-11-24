@@ -160,11 +160,11 @@ def test_demand_edge_cases(custom: Registry, make_world: MakeWorld) -> None:
     """AC1: no food reserve means no demand; one unit missing, or a one-nutrition food, counts."""
     a = Villager("a", "A", Coord(0, 0))
     state = make_world(ROWS, [a])
-    assert rules.demand(view_of(custom, state, food_reserve_per_capita=0.0), "crumb") == 0.0
-    assert rules.demand(view_of(custom, state, food_reserve_per_capita=1.0), "crumb") == 1.0
-    assert rules.demand(view_of(custom, state), "wood") == 0.0
+    assert rules.demand(view_of(custom, state, food_reserve_per_capita=0.0), a, "crumb") == 0.0
+    assert rules.demand(view_of(custom, state, food_reserve_per_capita=1.0), a, "crumb") == 1.0
+    assert rules.demand(view_of(custom, state), a, "wood") == 0.0
     state.buildings["w"] = Building("w", "wall", Coord(1, 8), Ownership("communal"))
-    assert rules.demand(view_of(custom, state), "wood") == 1.0  # a wall needs a single wood
+    assert rules.demand(view_of(custom, state), a, "wood") == 1.0  # a wall needs a single wood
 
 
 def test_utility_shares_demand_among_the_others_on_an_output(

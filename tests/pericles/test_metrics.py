@@ -4,7 +4,7 @@ import pytest
 
 from pericles.analysis.metrics import Row, daily_survival
 from pericles.core.events import Event
-from pericles.experiment.rundir import RunDirectory
+from pericles.experiment.rundir import RunDirectory, RunDirectoryError
 
 pytestmark = pytest.mark.req("REQ-EXP-003")
 CONFIG = {
@@ -71,3 +71,11 @@ def test_metrics_round_trip_through_parquet(tmp_path: Path) -> None:
     path = run_dir.write_metrics(rows)
     assert path.name == "metrics.parquet"
     assert run_dir.read_metrics() == rows
+
+
+def test_missing_metrics_are_a_run_directory_error(tmp_path: Path) -> None:
+    """AC1: a run directory without metrics.parquet says so, naming the file."""
+    run_dir = RunDirectory.create(tmp_path / "run", {"seed": 1}, seed=1)
+    with pytest.raises(RunDirectoryError, match=r"metrics\.parquet"):
+        run_dir.read_metrics()
+    run_dir.close()

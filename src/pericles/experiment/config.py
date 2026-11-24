@@ -244,6 +244,8 @@ def build_world(experiment: Experiment) -> WorldState:
         ),
         key=lambda c: (centre.manhattan(c), c.y, c.x),
     )
+    if not spots:
+        raise ExperimentError("map.start_radius: the start area has no walkable tile")
     ticks = engine.calendar.ticks_per_day
     villagers = []
     for i, spec in enumerate(experiment.population):

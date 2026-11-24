@@ -430,3 +430,50 @@ def test_every_crowded_couple_counts_once(registry: Registry, make_world: MakeWo
     for i, at in enumerate((Coord(1, 1), Coord(5, 1), Coord(9, 1))):
         house(state, f"h{i}", at)
     assert view_of(registry, state).crowded_couples() == 2
+
+
+def test_a_couple_in_a_full_house_moves_together_to_the_nearest_roomy_house(
+    registry: Registry, make_world: MakeWorld
+) -> None:
+    """AC1: a couple sharing a house with no spare bed moves, both of them, into the nearest
+    house with room for the two plus one (ties to the lower id); then it stays."""
+    capacity = registry.buildings["house"].housing
+    a = Villager("a", "A", Coord(8, 8), sex="female", partner="b", home="h0")
+    b = Villager("b", "B", Coord(8, 8), sex="male", partner="a", home="h0")
+    state = make_world(ROWS, [a, b])
+    for hid, at in (("h0", Coord(1, 1)), ("h9", Coord(8, 11)), ("h5", Coord(11, 8))):
+        house(state, hid, at)
+    house(state, "h1", Coord(8, 6))  # nearer, but only room for two
+    for i in range(capacity - 2):
+        state.villagers[f"o{i}"] = Villager(f"o{i}", "O", Coord(0, 0), home="h0")
+    for i in range(capacity - 2):
+        state.villagers[f"q{i}"] = Villager(f"q{i}", "Q", Coord(0, 0), home="h1")
+    view = view_of(registry, state, storage_per_capita=0.0)
+    assert view.family_house(a) is not None
+    decision = rules.home(view, a)
+    assert decision is not None and decision.intent == SetHome("a", "h5")  # h5 < h9, same distance
+    a.home = "h5"
+    decision = rules.home(view_of(registry, state, storage_per_capita=0.0), b)
+    assert decision is not None and decision.intent == SetHome("b", "h5")
+    b.home = "h5"
+    view = view_of(registry, state, storage_per_capita=0.0)
+    assert rules.home(view, a) is None and rules.home(view, b) is None
+
+
+def test_a_couple_in_a_full_house_stays_when_no_house_has_room_for_three(
+    registry: Registry, make_world: MakeWorld
+) -> None:
+    """AC1: with no house holding the couple plus a spare bed, nobody moves."""
+    capacity = registry.buildings["house"].housing
+    a = Villager("a", "A", Coord(8, 8), sex="female", partner="b", home="h0")
+    b = Villager("b", "B", Coord(8, 8), sex="male", partner="a", home="h0")
+    state = make_world(ROWS, [a, b])
+    house(state, "h0", Coord(1, 1))
+    house(state, "h1", Coord(8, 4))
+    for i in range(capacity - 2):
+        state.villagers[f"o{i}"] = Villager(f"o{i}", "O", Coord(0, 0), home="h0")
+        state.villagers[f"q{i}"] = Villager(f"q{i}", "Q", Coord(0, 0), home="h1")
+    view = view_of(registry, state, storage_per_capita=0.0)
+    assert view.family_house(a) is None and rules.home(view, a) is None
+    del state.villagers["o0"]  # a spare bed at home: no reason to move
+    assert rules.home(view_of(registry, state, storage_per_capita=0.0), a) is None

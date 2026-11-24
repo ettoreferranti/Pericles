@@ -6,6 +6,7 @@ import pytest
 
 from pericles.core.content.registry import base_pack_path
 from pericles.core.geometry import Coord
+from pericles.experiment import config as config_module
 from pericles.experiment.config import (
     ExperimentError,
     build_world,
@@ -217,3 +218,26 @@ def test_build_world_places_the_population(tmp_path: Path) -> None:
     assert max(centre.manhattan(v.pos) for v in (a, b)) <= 1
     assert world.nodes and world.digest() == build_world(experiment).digest()
     assert isinstance(a.pos, Coord)
+
+
+@pytest.fixture
+def no_start_tiles(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Map validation keeps the start area walkable; empty it to reach build_world's guard."""
+    monkeypatch.setattr(config_module, "start_area", lambda width, height, radius: [])
+
+
+@pytest.mark.usefixtures("no_start_tiles")
+def test_a_start_area_without_walkable_tiles_is_a_field_error(tmp_path: Path) -> None:
+    """AC1: villagers need a walkable start tile; the error names the field, not a crash."""
+    with pytest.raises(ExperimentError, match=r"^map\.start_radius: "):
+        build_world(experiment_from_mapping(MINIMAL, tmp_path))
+
+
+@pytest.mark.usefixtures("no_start_tiles")
+def test_a_world_that_cannot_be_built_creates_no_run_directory(tmp_path: Path) -> None:
+    """AC1: start builds the world before it creates the run directory."""
+    from pericles.experiment.launch import start
+
+    with pytest.raises(ExperimentError):
+        start(experiment_from_mapping(MINIMAL, tmp_path), tmp_path / "run")
+    assert not (tmp_path / "run").exists()

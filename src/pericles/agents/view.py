@@ -138,7 +138,7 @@ class View:
         self._blocked: frozenset[Coord] | None = None
         self._needed: Counter[str] | None = None
         self._stock: float | None = None
-        self._stored: float | None = None
+        self._stored: dict[str, float] = {}
         self._origins: dict[str, Coord | None] = {}
 
     @property
@@ -234,16 +234,17 @@ class View:
             self._stock = food_stock(self.ctx, self.state)
         return self._stock
 
-    def stored_food(self) -> float:
-        """Nutrition held in buildings' storage: the food anyone, children too, can fetch."""
-        if self._stored is None:
+    def stored_food(self, villager: Villager) -> float:
+        """Nutrition in the stores `villager` can fetch from (`stores`): complete buildings
+        with storage it may use and does not avoid. Summed in id and item order."""
+        if villager.id not in self._stored:
             items = self.ctx.registry.items
-            self._stored = sum(
+            self._stored[villager.id] = sum(
                 items[item].nutrition * qty
-                for building in self.state.buildings.values()
-                for item, qty in building.storage.totals().items()
+                for building in sorted(self.stores(villager), key=lambda b: b.id)
+                for item, qty in sorted(building.storage.totals().items())
             )
-        return self._stored
+        return self._stored[villager.id]
 
     def food_target(self) -> float:
         return self.config.food_reserve_per_capita * self.population()
@@ -302,6 +303,32 @@ class View:
         )
         return options[0] if options else None
 
+    def full(self, building: Building) -> bool:
+        """True if every bed of `building` is taken."""
+        housing = self.ctx.registry.buildings[building.kind].housing
+        return occupants(self.state, building.id) >= housing
+
+    def family_house(self, villager: Villager) -> Building | None:
+        """For a couple sharing a full house: the nearest other complete house (ties to the
+        lower id) either partner may live in, with beds for both and one to spare."""
+        registry = self.ctx.registry
+        partner = self.state.villagers.get(villager.partner) if villager.partner else None
+        if partner is None:
+            return None
+        wanted = beds_needed(villager) + beds_needed(partner) + 1
+
+        def fits(b: Building) -> bool:
+            housing = registry.buildings[b.kind].housing
+            allowed = b.ownership.owned_by(villager.id) or b.ownership.owned_by(partner.id)
+            room = occupants(self.state, b.id) + wanted <= housing
+            return b.complete and b.id != villager.home and allowed and room
+
+        options = sorted(
+            (b for b in self.state.buildings.values() if fits(b)),
+            key=lambda b: (villager.pos.manhattan(b.origin), b.id),
+        )
+        return options[0] if options else None
+
     def _communal(self, attribute: str, *, complete: bool) -> int:
         registry = self.ctx.registry
         return sum(
@@ -315,18 +342,14 @@ class View:
 
         Each couple counts once, by its bearing partner (ADR-0016 §4, amended).
         """
-        registry, villagers = self.ctx.registry, self.state.villagers
+        villagers = self.state.villagers
         crowded = 0
         for villager in villagers.values():
             partner = villagers.get(villager.partner) if villager.partner is not None else None
             if partner is None or villager.sex != self.ctx.config.bearing_sex:
                 continue
             home = self.home(villager)
-            roomy = (
-                home is not None
-                and partner.home == home.id
-                and occupants(self.state, home.id) < registry.buildings[home.kind].housing
-            )
+            roomy = home is not None and partner.home == home.id and not self.full(home)
             crowded += 0 if roomy else 1
         return crowded
 

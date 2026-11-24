@@ -28,7 +28,10 @@ def daily_survival(
     config: Mapping[str, Any], events: Iterable[Event], last_tick: int | None
 ) -> list[Row]:
     """Rows per day up to `last_tick`'s day: population, adults, children, births, deaths
-    (and `deaths.<cause>`), food eaten. Events must come in tick order."""
+    (and `deaths.<cause>`), food eaten. Events must come in tick order.
+
+    Pass the current tick as `last_tick`: the last row is then the village at the start of
+    the current day, with that day's counts so far (zero at its first tick)."""
     per_day = ticks_per_day(config)
     adult_age = int(config["engine"]["adult_age_days"])
     population = [(str(v["id"]), int(v["age_days"])) for v in config["population"]]

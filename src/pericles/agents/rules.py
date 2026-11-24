@@ -172,26 +172,28 @@ def wait(view: View, villager: Villager) -> Decision:
     return Decision(Wait(villager.id))
 
 
-def demand(view: View, item: str) -> float:
+def demand(view: View, villager: Villager, item: str) -> float:
     """How much the village wants `item`, 0..1 (ADR-0016 §4, amended).
 
-    Food is wanted until the stores hold the reserve; food in pockets does not count.
+    Food is wanted until the stores `villager` can fetch from hold the reserve; food in
+    pockets does not count.
     """
     if view.ctx.registry.items[item].nutrition > 0:
         target = view.food_target()
-        return 0.0 if target <= 0 else max(0.0, target - view.stored_food()) / target
+        return 0.0 if target <= 0 else max(0.0, target - view.stored_food(villager)) / target
     return 1.0 if view.needed()[item] > 0 else 0.0
 
 
 def utility(view: View, villager: Villager, action: ActionDef) -> float:
     best = max(
-        demand(view, item) / (1 + view.workers(item, villager.id)) for item in action.outputs
+        demand(view, villager, item) / (1 + view.workers(item, villager.id))
+        for item in action.outputs
     )
     return best * skill_score(view, villager, action)
 
 
 def work(view: View, villager: Villager) -> Decision | None:
-    wanted = [item for item in sorted(view.ctx.registry.items) if demand(view, item) > 0]
+    wanted = [item for item in sorted(view.ctx.registry.items) if demand(view, villager, item) > 0]
     scored = [(utility(view, villager, a), a) for a in jobs(view, villager, wanted)]
     ranked = [a for score, a in sorted(scored, key=lambda p: (-p[0], p[1].id)) if score > 0]
     return first_reachable(view, villager, ranked)
@@ -296,7 +298,10 @@ def home(view: View, villager: Villager) -> Decision | None:
     partner = view.state.villagers.get(villager.partner) if villager.partner is not None else None
     apart = partner is not None and partner.home is not None and partner.home != villager.home
     if current is not None and not apart:
-        return None
+        if partner is None or not view.full(current):
+            return None
+        house = view.family_house(villager)  # together, but no bed for a child: move together
+        return None if house is None else Decision(SetHome(villager.id, house.id), target=house.id)
     house = view.house_for(villager)
     if house is None or house.id == villager.home:
         return None

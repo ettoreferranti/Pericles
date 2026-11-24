@@ -25,27 +25,34 @@ class Session:
 
 
 def start(experiment: Experiment, out: Path) -> Session:
-    run_dir = RunDirectory.create(out, experiment.resolved, seed=experiment.seed)
+    """Build everything first, so a world that cannot be built leaves no run directory."""
+    state = build_world(experiment)
     engine = Engine(experiment.registry, experiment.engine)
     controller = scripted_controller(engine.context, experiment.agents)
-    return Session(run_dir, experiment, engine, build_world(experiment), controller)
+    run_dir = RunDirectory.create(out, experiment.resolved, seed=experiment.seed)
+    return Session(run_dir, experiment, engine, state, controller)
 
 
 def reopen(out: Path) -> Session:
+    """Continue from the last usable snapshot; the run directory is closed if that fails."""
     run_dir = RunDirectory.open(out)
-    experiment = experiment_from_mapping(run_dir.config, run_dir.path)
-    engine = Engine(experiment.registry, experiment.engine)
-    state, agents = resume(run_dir)
-    controller = scripted_controller(engine.context, experiment.agents)
-    controller.load(agents)
+    try:
+        experiment = experiment_from_mapping(run_dir.config, run_dir.path)
+        engine = Engine(experiment.registry, experiment.engine)
+        state, agents = resume(run_dir)
+        controller = scripted_controller(engine.context, experiment.agents)
+        controller.load(agents)
+    except BaseException:
+        run_dir.close()
+        raise
     return Session(run_dir, experiment, engine, state, controller)
 
 
 def advance(session: Session, days: int | None = None) -> WorldState:
     """Run until `days` in-game days in total (default: run.days); then rewrite the metrics.
 
-    The metrics run through the current tick's day, so the day the run stops at is reported
-    with the village as it stands (the day printed by the command line)."""
+    The metrics run through the current tick's day: the last row is the village at the start
+    of the current day (ADR-0016 §6)."""
     per_day = session.experiment.engine.calendar.ticks_per_day
     total = session.experiment.run.days if days is None else days
     session.state = run(

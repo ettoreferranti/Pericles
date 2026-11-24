@@ -171,7 +171,7 @@ def test_the_scripted_controller_carries_the_given_minds(
     assert scripted_controller(ctx, CONFIG).minds == {}
 
 
-@pytest.mark.req("REQ-SIM-016")
+@pytest.mark.req("REQ-AGT-008")
 def test_a_hungry_child_with_nothing_to_eat_forages_before_sleeping(
     registry: Registry, make_world: MakeWorld
 ) -> None:
