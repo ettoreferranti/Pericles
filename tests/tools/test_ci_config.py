@@ -44,8 +44,10 @@ def test_mutation_runs_incrementally_on_prs_and_fully_nightly() -> None:
     assert "pnpm mutation" in nightly
 
 
-def test_mutation_runs_cap_mutmut_workers() -> None:
-    """Both mutation runs cap mutmut's workers so they fit the runner's memory."""
+def test_mutation_runs_cap_memory_per_process() -> None:
+    """Both mutation runs cap each process's memory, so a runaway mutant fails instead of
+    taking the runner down."""
     for workflow in (".github/workflows/ci.yml", ".github/workflows/mutation-nightly.yml"):
-        assert "mutation_gate run" in run_commands(workflow)
-        assert "--max-children 2" in run_commands(workflow)
+        commands = run_commands(workflow)
+        assert "ulimit -d 2097152\n" in commands
+        assert commands.index("ulimit -d") < commands.index("mutation_gate run")

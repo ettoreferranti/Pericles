@@ -61,8 +61,11 @@ jobs:
       - name: Install
         run: uv sync --locked
       - name: Mutation testing (changed modules)
-        # two workers keep mutmut within the runner's memory (4 workers were killed, exit 143)
-        run: uv run python -m pericles_tools.mutation_gate run --changed-since origin/${{ github.base_ref }} --max-children 2
+        # cap each process at 2 GiB: a runaway mutant then fails (counted killed) instead of
+        # exhausting the runner's memory (it was killed with exit 143); real tests need ~150 MB
+        run: |
+          ulimit -d 2097152
+          uv run python -m pericles_tools.mutation_gate run --changed-since origin/${{ github.base_ref }}
       - name: Viewer mutation testing (if viewer changed)
         run: |
           if git diff --name-only origin/${{ github.base_ref }}...HEAD | grep -q '^viewer/src/'; then
