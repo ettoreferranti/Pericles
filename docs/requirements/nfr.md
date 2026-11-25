@@ -9,7 +9,7 @@ Must · M0 · Implemented
 - AC1: Runs on macOS (Apple Silicon) with Python ≥ 3.12 and Node ≥ 20. The core also runs on Linux, which CI uses with FakeBackend.
 
 ### REQ-NFR-003: Engine performance
-Should · M1 · Accepted
+Should · M1 · Implemented
 - AC1: Without LLM calls (all scripted), the engine sustains ≥ 1000 ticks/s with 150 villagers on a 128×128 map on the target machine.
 
 ### REQ-NFR-004: LLM budget

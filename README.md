@@ -8,7 +8,7 @@ experimenter can change during a run.
 - Requirements: [docs/requirements/](docs/requirements/README.md)
 - Architecture decisions: [docs/adr/](docs/adr/README.md)
 
-Status: M1 Headless sim is built (M1a to M1d); REQ-NFR-003 (engine speed) is still Accepted pending a faster margin, so M1 is not yet marked done.
+Status: M1 Headless sim is done (M1a to M1d), with every M1 requirement Implemented, including REQ-NFR-003 (at least 1000 scripted ticks/s with 150 villagers on a 128×128 map). Next is M2, LLM minds.
 
 ## Run a village
 
