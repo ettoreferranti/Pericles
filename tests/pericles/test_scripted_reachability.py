@@ -9,7 +9,7 @@ import pytest
 from pericles.agents import rules
 from pericles.agents.config import AgentConfig
 from pericles.agents.scripted import scripted_controller
-from pericles.agents.view import Memory, NodeIndex, View
+from pericles.agents.view import Memory, NodeIndex, View, regions
 from pericles.core.buildings import Building, Ownership
 from pericles.core.content.registry import Registry
 from pericles.core.context import Context
@@ -242,3 +242,40 @@ def test_avoided_houses_are_not_taken_as_homes(registry: Registry, make_world: M
     assert target == "h1"
     avoid_target = {"a": Memory(avoid={target: state.tick + 5})}
     assert rules.home(view_of(registry, state, avoid_target), a) is None
+
+
+def walkable_rows(*rows: str) -> tuple[list[bool], int, int]:
+    return [c == "." for row in rows for c in row], len(rows[0]), len(rows)
+
+
+def test_regions_label_four_connected_walkable_tiles_in_row_order() -> None:
+    """AC1: walkable tiles joined by up, right, down or left steps share a label (0, 1, ...
+    by first tile in row order); steps never wrap round a row's end; walls are -1."""
+    grid = walkable_rows(
+        "#.###.",
+        ".#.##.",
+        ".#.#..",
+        "...###",
+    )
+    assert regions(*grid) == [
+        -1, 0, -1, -1, -1, 1,
+        2, -1, 2, -1, -1, 1,
+        2, -1, 2, -1, 1, 1,
+        2, 2, 2, -1, -1, -1,
+    ]  # fmt: skip
+    assert regions(*walkable_rows("...")) == [0, 0, 0]
+    assert regions(*walkable_rows("#.", "..")) == [-1, 0, 0, 0]
+    assert regions(*walkable_rows(".#.", "#.#")) == [0, -1, 1, -1, 2, -1]
+
+
+def test_free_origin_reaches_by_column_and_row(registry: Registry, make_world: MakeWorld) -> None:
+    """AC1: water splits the map at column 4; a villager west of it is offered a site west of
+    it although the centre (and any nearer spot) lies east."""
+    rows = ["....~" + "." * 11] * 16
+    west, east = Coord(1, 8), Coord(12, 8)
+    view = view_of(registry, make_world(rows, [Villager("a", "A", west)]))
+    assert view.reach(west) != view.reach(east)
+    origin = view.free_origin("house", west)
+    assert origin is not None and origin.x + 1 < 4
+    far = view.free_origin("house", east)
+    assert far is not None and far.x > 4
