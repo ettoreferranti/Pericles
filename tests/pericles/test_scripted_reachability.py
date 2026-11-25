@@ -279,3 +279,15 @@ def test_free_origin_reaches_by_column_and_row(registry: Registry, make_world: M
     assert origin is not None and origin.x + 1 < 4
     far = view.free_origin("house", east)
     assert far is not None and far.x > 4
+
+
+def test_reach_keeps_each_tile_of_the_start_and_beside_it(
+    registry: Registry, make_world: MakeWorld
+) -> None:
+    """AC1: a villager on open grass reaches its own region, whatever lies elsewhere (here a
+    small pond at (3..5, 6..8))."""
+    rows = ["." * 16 for _ in range(16)]
+    for x, y in ((4, 6), (3, 7), (4, 7), (5, 7), (4, 8)):
+        rows[y] = rows[y][:x] + "~" + rows[y][x + 1 :]
+    view = view_of(registry, make_world(rows))
+    assert view.reach(Coord(12, 8)) == view.reach(Coord(0, 0)) == frozenset({0})
