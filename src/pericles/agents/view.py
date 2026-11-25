@@ -8,7 +8,14 @@ from dataclasses import dataclass, field
 from typing import Any, TypeVar, cast
 
 from pericles.agents.config import RELIEFS, AgentConfig
-from pericles.core.buildings import Building, building_tiles, footprint, near, remaining_cost
+from pericles.core.buildings import (
+    COMMUNAL,
+    Building,
+    building_tiles,
+    footprint,
+    near,
+    remaining_cost,
+)
 from pericles.core.construction import blocked_tiles
 from pericles.core.context import Context
 from pericles.core.geometry import Coord
@@ -190,6 +197,7 @@ class View:
         self._sites: tuple[Building, ...] | None = None
         self._storage: tuple[Building, ...] | None = None
         self._usable: dict[str, tuple[Building, ...]] = {}
+        self._owners: tuple[tuple[Building, ...], dict[str | None, frozenset[str]]] | None = None
         self._housing_shortfall: int | None = None
         self._storage_shortfall: float | None = None
         self._center: Coord | None = None
@@ -309,13 +317,34 @@ class View:
             memory = self.memory.get(villager.id)
             avoid = memory.avoid if memory is not None else {}
             tick = self.state.tick
-            usable = tuple(
-                b
-                for b in self._storehouses()
-                if b.ownership.owned_by(villager.id) and avoid.get(b.id, tick) <= tick
-            )
+            communal, owned = self._store_owners()
+            if villager.id in owned or any(
+                until > tick and target in owned[None] for target, until in avoid.items()
+            ):
+                usable = tuple(
+                    b
+                    for b in self._storehouses()
+                    if b.ownership.owned_by(villager.id) and avoid.get(b.id, tick) <= tick
+                )
+            else:  # no store of its own and none avoided: just the communal ones
+                usable = communal
             self._usable[villager.id] = usable
         return usable
+
+    def _store_owners(self) -> tuple[tuple[Building, ...], dict[str | None, frozenset[str]]]:
+        """The communal `_storehouses`, and the ids of each owner's other storehouses, with
+        every storehouse id under None. Built once a tick."""
+        if self._owners is None:
+            owned: dict[str | None, set[str]] = {None: set()}
+            communal = []
+            for b in self._storehouses():
+                owned[None].add(b.id)
+                if b.ownership.kind == COMMUNAL:
+                    communal.append(b)
+                for owner in b.ownership.owners:
+                    owned.setdefault(owner, set()).add(b.id)
+            self._owners = (tuple(communal), {k: frozenset(v) for k, v in owned.items()})
+        return self._owners
 
     def stores(self, villager: Villager) -> list[Building]:
         return sorted(

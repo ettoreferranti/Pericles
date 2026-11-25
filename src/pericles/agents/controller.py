@@ -135,7 +135,7 @@ class Controller:
             else:
                 memory.idle_until = state.tick + self.config.idle_ticks
         for memory in self.memory.values():
-            if memory.avoid:
+            if memory.avoid and min(memory.avoid.values()) <= state.tick:
                 memory.avoid = {t: until for t, until in memory.avoid.items() if until > state.tick}
 
     def to_dict(self) -> dict[str, Any]:

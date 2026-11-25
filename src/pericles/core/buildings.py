@@ -10,7 +10,8 @@ from pericles.core.content.registry import Registry
 from pericles.core.geometry import Coord
 from pericles.core.inventory import Inventory
 
-OWNERSHIP_KINDS = ("personal", "shared", "communal")
+COMMUNAL = "communal"  # everyone owns it; it lists no owners
+OWNERSHIP_KINDS = ("personal", "shared", COMMUNAL)
 
 
 @dataclass(frozen=True)
@@ -21,7 +22,7 @@ class Ownership:
     def __post_init__(self) -> None:
         if self.kind not in OWNERSHIP_KINDS:
             raise ValueError(f"unknown ownership kind {self.kind!r}")
-        if self.kind == "communal" and self.owners:
+        if self.kind == COMMUNAL and self.owners:
             raise ValueError("communal ownership has no owners")
         if self.kind == "personal" and len(self.owners) != 1:
             raise ValueError("personal ownership needs exactly one owner")
@@ -31,7 +32,7 @@ class Ownership:
             raise ValueError("owners must be sorted and unique")
 
     def owned_by(self, villager: str) -> bool:
-        return self.kind == "communal" or villager in self.owners
+        return self.kind == COMMUNAL or villager in self.owners
 
     def to_dict(self) -> dict[str, Any]:
         return {"kind": self.kind, "owners": list(self.owners)}
