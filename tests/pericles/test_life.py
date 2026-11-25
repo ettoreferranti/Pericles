@@ -290,14 +290,15 @@ def test_an_unfinished_or_missing_home_gives_no_shelter(
 
 
 @pytest.mark.req("REQ-SIM-012")
-@pytest.mark.parametrize("complete", [True, False])
+@pytest.mark.parametrize(("complete", "kind"), [(True, "lodge"), (True, "cabin"), (False, "lodge")])
 def test_needs_shelter_exactly_where_at_home_is_true(
-    life: Registry, make_world: MakeWorld, complete: bool
+    life: Registry, make_world: MakeWorld, complete: bool, kind: str
 ) -> None:
     """AC1: on every tile of the map, cold falls by the shelter rate exactly when `at_home`
-    holds (next to or on a completed home), and rises everywhere else."""
+    holds (next to or on a completed home, 2x2 or 1x1), and rises everywhere else."""
     state = make_world(ROWS, [ana(needs={"cold": 10.0}, home="b0")])
-    lodge(state).complete = complete
+    house = lodge(state)
+    house.complete, house.kind = complete, kind
     engine = Engine(life, EngineConfig(shelter_relief_per_hour=120.0))
     villager = state.villagers["a"]
     sheltered = []

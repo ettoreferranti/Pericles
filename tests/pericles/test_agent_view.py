@@ -440,6 +440,19 @@ def test_stored_food_and_food_demand_are_per_villager(
     assert plenty.food_demand(b) == 0.0
 
 
+def test_held_counts_stored_tools_with_the_items(registry: Registry, make_world: MakeWorld) -> None:
+    """AC1: what a store holds is its items plus its tools, with or without tools stored."""
+    state = make_world(ROWS, [Villager("a", "A", Coord(0, 0))])
+    bare = building(state, "s0", "storehouse", Coord(4, 4))
+    tooled = building(state, "s1", "storehouse", Coord(6, 6))
+    for store in (bare, tooled):
+        store.storage.add(registry, "berries", 2)
+    tooled.storage.add(registry, "axe", 1)
+    view = view_of(registry, state)
+    assert dict(view.held(bare)) == {"berries": 2}
+    assert dict(view.held(tooled)) == {"berries": 2, "axe": 1}
+
+
 def test_remember_keeps_workers_builders_and_placers_current(
     registry: Registry, make_world: MakeWorld
 ) -> None:

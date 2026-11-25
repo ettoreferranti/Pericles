@@ -197,7 +197,7 @@ class View:
         self._sites: tuple[Building, ...] | None = None
         self._storage: tuple[Building, ...] | None = None
         self._usable: dict[str, tuple[Building, ...]] = {}
-        self._owners: tuple[tuple[Building, ...], dict[str | None, frozenset[str]]] | None = None
+        self._owners: tuple[tuple[Building, ...], frozenset[str], frozenset[str]] | None = None
         self._housing_shortfall: int | None = None
         self._storage_shortfall: float | None = None
         self._center: Coord | None = None
@@ -317,9 +317,9 @@ class View:
             memory = self.memory.get(villager.id)
             avoid = memory.avoid if memory is not None else {}
             tick = self.state.tick
-            communal, owned = self._store_owners()
-            if villager.id in owned or any(
-                until > tick and target in owned[None] for target, until in avoid.items()
+            communal, owners, ids = self._store_owners()
+            if villager.id in owners or any(
+                until > tick and target in ids for target, until in avoid.items()
             ):
                 usable = tuple(
                     b
@@ -331,19 +331,16 @@ class View:
             self._usable[villager.id] = usable
         return usable
 
-    def _store_owners(self) -> tuple[tuple[Building, ...], dict[str | None, frozenset[str]]]:
-        """The communal `_storehouses`, and the ids of each owner's other storehouses, with
-        every storehouse id under None. Built once a tick."""
+    def _store_owners(self) -> tuple[tuple[Building, ...], frozenset[str], frozenset[str]]:
+        """Once a tick: the communal `_storehouses`, the owners of the others, and the ids of
+        all of them."""
         if self._owners is None:
-            owned: dict[str | None, set[str]] = {None: set()}
-            communal = []
-            for b in self._storehouses():
-                owned[None].add(b.id)
-                if b.ownership.kind == COMMUNAL:
-                    communal.append(b)
-                for owner in b.ownership.owners:
-                    owned.setdefault(owner, set()).add(b.id)
-            self._owners = (tuple(communal), {k: frozenset(v) for k, v in owned.items()})
+            stores = self._storehouses()
+            self._owners = (
+                tuple(b for b in stores if b.ownership.kind == COMMUNAL),
+                frozenset(owner for b in stores for owner in b.ownership.owners),
+                frozenset(b.id for b in stores),
+            )
         return self._owners
 
     def stores(self, villager: Villager) -> list[Building]:
