@@ -41,6 +41,7 @@ class TerrainCostField:
         self.min_cost = min(walkable) if walkable else 1.0
         self._blocked = blocked
         self._keyed: list[float | None] | None = None
+        self._steps: _Steps | None = None
 
     def cost(self, c: Coord) -> float | None:
         if not (0 <= c.x < self.width and 0 <= c.y < self.height):
@@ -54,6 +55,12 @@ class TerrainCostField:
         if self._keyed is None:
             self._keyed = keyed_costs(self)
         return self._keyed
+
+    def steps(self) -> _Steps:
+        """`_Steps` over `keyed_costs`, kept with the field (its costs never change)."""
+        if self._steps is None:
+            self._steps = _Steps(self.width, self.height, self.keyed_costs())
+        return self._steps
 
 
 def keyed_costs(field: CostField) -> list[float | None]:
@@ -71,6 +78,34 @@ class _AskedCosts(dict[int, float | None]):
     def __missing__(self, key: int) -> float | None:
         x, y = divmod(key, self.field.height)
         value = self[key] = self.field.cost(Coord(x, y))
+        return value
+
+
+Step = tuple[int, int, int, float]  # (tile key, x, y, cost to enter)
+
+
+class _Steps(dict[int, tuple[Step, ...]]):
+    """The passable neighbours of each tile key, in the order up, right, down, left; worked
+    out once per tile on first use. Neighbours off the map are left out."""
+
+    def __init__(
+        self, width: int, height: int, costs: Sequence[float | None] | _AskedCosts
+    ) -> None:
+        super().__init__()
+        self.width, self.height, self.costs = width, height, costs
+
+    def __missing__(self, key: int) -> tuple[Step, ...]:
+        width, height, costs = self.width, self.height, self.costs
+        x, y = divmod(key, height)
+        found = []
+        for nx, ny in ((x, y - 1), (x + 1, y), (x, y + 1), (x - 1, y)):
+            if not (0 <= nx < width and 0 <= ny < height):
+                continue
+            nb = nx * height + ny
+            step = costs[nb]
+            if step is not None:
+                found.append((nb, nx, ny, step))
+        value = self[key] = tuple(found)
         return value
 
 
@@ -95,8 +130,10 @@ def find_path(field: CostField, start: Coord, goal: Coord) -> list[Coord] | None
     gx, gy = goal
     target = gx * height + gy
     origin = start.x * height + start.y
-    costs: list[float | None] | _AskedCosts = (
-        field.keyed_costs() if isinstance(field, TerrainCostField) else _AskedCosts(field)
+    steps = (
+        field.steps()
+        if isinstance(field, TerrainCostField)
+        else _Steps(width, height, _AskedCosts(field))
     )
     best: dict[int, float] = {origin: 0.0}
     came_from: dict[int, int] = {}
@@ -113,16 +150,9 @@ def find_path(field: CostField, start: Coord, goal: Coord) -> list[Coord] | None
                 keys.append(current)
             return [Coord(k // height, k % height) for k in reversed(keys)]
         closed.add(current)
-        x, y = divmod(current, height)
         here = best[current]
-        for nx, ny in ((x, y - 1), (x + 1, y), (x, y + 1), (x - 1, y)):
-            if not (0 <= nx < width and 0 <= ny < height):
-                continue
-            nb = nx * height + ny
+        for nb, nx, ny, step in steps[current]:
             if nb in closed:
-                continue
-            step = costs[nb]
-            if step is None:
                 continue
             cost = here + step
             if cost < best.get(nb, math.inf):

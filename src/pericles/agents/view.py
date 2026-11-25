@@ -191,7 +191,7 @@ class View:
         self._food: dict[str, float] = {}
         self._food_demand: dict[str, float] = {}
         self._memo: dict[Hashable, object] = {}
-        self._held: dict[str, Counter[str]] = {}
+        self._held: dict[str, Mapping[str, int]] = {}
         self._jobs: Counter[str] | None = None
         self._targets: Counter[tuple[str | None, str]] | None = None
         self._producing: dict[str, frozenset[str]] = {}
@@ -381,10 +381,13 @@ class View:
         return known
 
     def held(self, building: Building) -> Mapping[str, int]:
-        """`building.storage.totals()`, counted once a tick (missing items count 0)."""
+        """`building.storage.totals()`, counted once a tick; a store without tools holds
+        just its items, so they are read as they are. Read only, with `get(item, 0)`."""
         found = self._held.get(building.id)
         if found is None:
-            found = self._held[building.id] = building.storage.totals()
+            storage = building.storage
+            found = storage.items if not storage.tools else storage.totals()
+            self._held[building.id] = found
         return found
 
     def food_target(self) -> float:
