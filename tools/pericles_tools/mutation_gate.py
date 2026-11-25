@@ -122,6 +122,7 @@ def main(argv: Sequence[str] | None = None, runner: Runner = _run, root: Path = 
     sub = parser.add_subparsers(dest="command", required=True)
     run = sub.add_parser("run")
     run.add_argument("--changed-since", default=None, help="git ref; mutate only changed modules")
+    run.add_argument("--max-children", type=int, default=None, help="cap mutmut's parallel workers")
     args = parser.parse_args(argv)
 
     globs: list[str] = []
@@ -141,7 +142,8 @@ def main(argv: Sequence[str] | None = None, runner: Runner = _run, root: Path = 
         print("mutation gate: no functions to mutate yet")
         return 0
 
-    run_proc = runner(["mutmut", "run", *globs])
+    workers = [] if args.max_children is None else ["--max-children", str(args.max_children)]
+    run_proc = runner(["mutmut", "run", *workers, *globs])
     results = parse_results(runner(["mutmut", "results", "--all", "true"]).stdout)
     in_scope = {
         name: status

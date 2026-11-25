@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import heapq
+import math
 from collections.abc import Callable, Sequence
 from typing import Protocol
 
@@ -12,6 +13,10 @@ from pericles.core.mapgen import TileMap
 
 
 class CostField(Protocol):
+    """Step costs for `find_path`: None is impassable. Costs must be pure (the same tile
+    always costs the same), and tiles off the map are impassable: `find_path` never asks
+    about them."""
+
     width: int
     height: int
     min_cost: float
@@ -35,6 +40,8 @@ class TerrainCostField:
         walkable = [c for c in self._costs if c is not None]
         self.min_cost = min(walkable) if walkable else 1.0
         self._blocked = blocked
+        self._keyed: list[float | None] | None = None
+        self._steps: _Steps | None = None
 
     def cost(self, c: Coord) -> float | None:
         if not (0 <= c.x < self.width and 0 <= c.y < self.height):
@@ -43,44 +50,115 @@ class TerrainCostField:
             return None
         return self._costs[c.y * self.width + c.x]
 
+    def keyed_costs(self) -> list[float | None]:
+        """`cost` of every tile, indexed `x * height + y` (as `find_path` keys tiles)."""
+        if self._keyed is None:
+            self._keyed = keyed_costs(self)
+        return self._keyed
+
+    def steps(self) -> _Steps:
+        """`_Steps` over `keyed_costs`, kept with the field (its costs never change)."""
+        if self._steps is None:
+            self._steps = _Steps(self.width, self.height, self.keyed_costs())
+        return self._steps
+
+
+def keyed_costs(field: CostField) -> list[float | None]:
+    """`field.cost` of every tile, indexed `x * height + y`."""
+    return [field.cost(Coord(x, y)) for x in range(field.width) for y in range(field.height)]
+
+
+class _AskedCosts(dict[int, float | None]):
+    """`field.cost` by tile key, asked once per tile on first use."""
+
+    def __init__(self, field: CostField) -> None:
+        super().__init__()
+        self.field = field
+
+    def __missing__(self, key: int) -> float | None:
+        x, y = divmod(key, self.field.height)
+        value = self[key] = self.field.cost(Coord(x, y))
+        return value
+
+
+Step = tuple[int, int, int, float]  # (tile key, x, y, cost to enter)
+
+
+class _Steps(dict[int, tuple[Step, ...]]):
+    """The passable neighbours of each tile key, in the order up, right, down, left; worked
+    out once per tile on first use. Neighbours off the map are left out."""
+
+    def __init__(
+        self, width: int, height: int, costs: Sequence[float | None] | _AskedCosts
+    ) -> None:
+        super().__init__()
+        self.width, self.height, self.costs = width, height, costs
+
+    def __missing__(self, key: int) -> tuple[Step, ...]:
+        width, height, costs = self.width, self.height, self.costs
+        x, y = divmod(key, height)
+        found = []
+        for nx, ny in ((x, y - 1), (x + 1, y), (x, y + 1), (x - 1, y)):
+            if not (0 <= nx < width and 0 <= ny < height):
+                continue
+            nb = nx * height + ny
+            step = costs[nb]
+            if step is not None:
+                found.append((nb, nx, ny, step))
+        value = self[key] = tuple(found)
+        return value
+
 
 def _in_bounds(field: CostField, c: Coord) -> bool:
     return 0 <= c.x < field.width and 0 <= c.y < field.height
 
 
 def find_path(field: CostField, start: Coord, goal: Coord) -> list[Coord] | None:
+    """A* over 4-neighbours; ties break on (f, h, tile) with tiles ordered as `Coord` (x, y).
+
+    Tiles are keyed `x * height + y`, which orders exactly as `Coord`; neighbours off the map
+    are skipped (a cost field is impassable there). A `TerrainCostField` lists its costs once
+    (`keyed_costs`); any other field is asked once per tile it reaches.
+    """
     if not (_in_bounds(field, start) and _in_bounds(field, goal)):
         return None
     if start == goal:
         return [start]
     if field.cost(goal) is None:
         return None
-    best: dict[Coord, float] = {start: 0.0}
-    came_from: dict[Coord, Coord] = {}
-    closed: set[Coord] = set()
-    frontier: list[tuple[float, float, Coord]] = [(0.0, 0.0, start)]
+    width, height, min_cost = field.width, field.height, field.min_cost
+    gx, gy = goal
+    target = gx * height + gy
+    origin = start.x * height + start.y
+    steps = (
+        field.steps()
+        if isinstance(field, TerrainCostField)
+        else _Steps(width, height, _AskedCosts(field))
+    )
+    best: dict[int, float] = {origin: 0.0}
+    came_from: dict[int, int] = {}
+    closed: set[int] = set()
+    frontier: list[tuple[float, float, int]] = [(0.0, 0.0, origin)]
     while frontier:
         _, _, current = heapq.heappop(frontier)
         if current in closed:
             continue
-        if current == goal:
-            path = [current]
+        if current == target:
+            keys = [current]
             while current in came_from:
                 current = came_from[current]
-                path.append(current)
-            return path[::-1]
+                keys.append(current)
+            return [Coord(k // height, k % height) for k in reversed(keys)]
         closed.add(current)
-        for nb in current.neighbours4():
+        here = best[current]
+        for nb, nx, ny, step in steps[current]:
             if nb in closed:
                 continue
-            step = field.cost(nb)
-            if step is None:
-                continue
-            cost = best[current] + step
-            if cost < best.get(nb, float("inf")):
+            cost = here + step
+            if cost < best.get(nb, math.inf):
                 best[nb] = cost
                 came_from[nb] = current
-                h = nb.manhattan(goal) * field.min_cost
+                h = (abs(nx - gx) + abs(ny - gy)) * min_cost
                 heapq.heappush(frontier, (cost + h, h, nb))
     return None
 

@@ -21,7 +21,7 @@ def test_create_writes_layout(tmp_path: Path) -> None:
     root = tmp_path / "run1"
     assert yaml.safe_load((root / "config.yaml").read_text(encoding="utf-8")) == CONFIG
     meta = json.loads((root / "meta.json").read_text(encoding="utf-8"))
-    assert meta["schema_version"] == RunDirectory.SCHEMA_VERSION == 2  # life fields in snapshots
+    assert meta["schema_version"] == RunDirectory.SCHEMA_VERSION == 3  # agent memory in snapshots
     assert meta["seed"] == 9
     assert meta["pericles_version"] == pericles.__version__
     assert "created_utc" in meta and "python" in meta
@@ -74,8 +74,8 @@ def test_snapshots_save_and_latest(tmp_path: Path) -> None:
     assert first.name == "tick-0000000000.json"
     assert run.snapshot_ticks() == [0, 10, 20]
     latest = run.latest_snapshot()
-    assert latest is not None and latest["tick"] == 20
-    assert WorldState.from_dict(latest).digest() == make_state(20).digest()
+    assert latest is not None and latest.tick == 20
+    assert WorldState.from_dict(latest.world).digest() == make_state(20).digest()
     assert not list((tmp_path / "run" / "snapshots").glob("*.tmp"))
     run.close()
 
@@ -102,3 +102,14 @@ def test_failed_create_never_overwrites_existing_run(tmp_path: Path) -> None:
     reopened = RunDirectory.open(tmp_path / "run")
     assert reopened.config == CONFIG and reopened.event_log.last_tick() == 0
     reopened.close()
+
+
+def test_open_rejects_an_unreadable_meta(tmp_path: Path) -> None:
+    """AC3: a damaged meta.json is a RunDirectoryError, not a JSONDecodeError."""
+    RunDirectory.create(tmp_path / "run", CONFIG, seed=3).close()
+    (tmp_path / "run" / "meta.json").write_text("{nope", encoding="utf-8")
+    with pytest.raises(RunDirectoryError, match="unreadable"):
+        RunDirectory.open(tmp_path / "run")
+    (tmp_path / "run" / "meta.json").write_text("[]", encoding="utf-8")
+    with pytest.raises(RunDirectoryError, match="unreadable"):
+        RunDirectory.open(tmp_path / "run")

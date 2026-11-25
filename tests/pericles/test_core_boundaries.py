@@ -5,6 +5,7 @@ from typing import cast
 
 import pytest
 
+import pericles.agents
 import pericles.core
 
 CORE = Path(pericles.core.__file__).parent
@@ -146,3 +147,62 @@ def test_numeric_literals_finds_nested_numbers(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     assert numeric_literals(source, "mapgen.py") == [("<module>", 7, 1), ("f", 2.5, 3)]
+
+
+AGENTS = Path(pericles.agents.__file__).parent
+AGENT_FORBIDDEN_MODULES = ("random", "time", "datetime", "uuid", "secrets")
+AGENT_FORBIDDEN_PACKAGES = ("pericles.experiment", "pericles.server", "pericles.analysis")
+# Numeric literals other than 0 and 1 that agents may contain: (file, scope, value) → why.
+AGENT_ALLOWED_NUMBERS: dict[tuple[str, str, float], str] = {}
+AGENT_PARAMETER_MODULES = {"config.py"}
+
+
+@pytest.mark.req("REQ-AGT-008")
+def test_agents_are_deterministic_and_layered() -> None:
+    """AC1: scripted minds use no clock or randomness and sit below the experiment layer."""
+    offenders = []
+    for path in sorted(AGENTS.rglob("*.py")):
+        package = ".".join(("pericles", "agents", *path.relative_to(AGENTS).parts[:-1]))
+        for name in imported_modules(path, package):
+            top = name.split(".")[0]
+            bad_package = any(
+                name == p or name.startswith(p + ".") for p in AGENT_FORBIDDEN_PACKAGES
+            )
+            if top in AGENT_FORBIDDEN_MODULES or bad_package:
+                offenders.append(f"{path.relative_to(AGENTS)}: {name}")
+    assert offenders == []
+
+
+@pytest.mark.skipif(
+    "MUTANT_UNDER_TEST" in os.environ,
+    reason="mutmut rewrites agents into mangled trampolines; this is a static source check",
+)
+def test_agents_have_no_magic_numbers() -> None:
+    """No magic values (ADR-0016): scripted thresholds live in AgentConfig, not in code."""
+    offenders = []
+    for path in sorted(AGENTS.rglob("*.py")):
+        name = path.relative_to(AGENTS).as_posix()
+        if name in AGENT_PARAMETER_MODULES:
+            continue
+        offenders += [
+            f"{name}:{line} {value!r} in {scope}"
+            for scope, value, line in numeric_literals(path, name)
+            if (name, scope, value) not in AGENT_ALLOWED_NUMBERS
+        ]
+    assert offenders == []
+
+
+@pytest.mark.req("REQ-EXP-003")
+def test_analysis_reads_only_the_event_schema() -> None:
+    """AC1: metrics derive from the event log and config, independent of the engine and agents."""
+    import pericles.analysis
+
+    root = Path(pericles.analysis.__file__).parent
+    offenders = [
+        f"{path.name}: {name}"
+        for path in sorted(root.rglob("*.py"))
+        for name in imported_modules(path, "pericles.analysis")
+        if name.startswith("pericles")
+        and not name.startswith(("pericles.core.events", "pericles.analysis"))
+    ]
+    assert offenders == []

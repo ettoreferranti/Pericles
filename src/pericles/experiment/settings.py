@@ -10,31 +10,38 @@ from typing import Any
 
 from pydantic import TypeAdapter, ValidationError
 
+from pericles.agents.config import AgentConfig
 from pericles.core.calendar import Calendar, Season
 from pericles.core.config import EngineConfig
 from pericles.core.content.loader import ContentError, read_yaml
 from pericles.core.content.schema import ModifierDef
 from pericles.core.modifiers import Modifier
 
-SECTIONS = ("engine",)
+SECTIONS = ("engine", "agents")
 
 
 class SettingsError(ValueError):
     """A settings file is invalid; the message starts with the dotted field path."""
 
 
-def _mapping(data: object, where: str) -> Mapping[str, Any]:
+def as_mapping(data: object, where: str) -> Mapping[str, Any]:
     if not isinstance(data, Mapping):
         raise SettingsError(f"{where}: expected a mapping")
+    for key in data:
+        if not isinstance(key, str):
+            raise SettingsError(f"{where}: setting names must be strings, got {key!r}")
     return data
 
 
-def _values(
+def values_for(
     cls: type[Any], data: Mapping[str, Any], where: str, nested: set[str]
 ) -> dict[str, Any]:
-    """Validate the scalar fields of a dataclass; `nested` fields are left to the caller."""
+    """Validate the scalar fields of a dataclass; `nested` fields are left to the caller.
+
+    Fields with `init=False` are derived (such as `Calendar`'s season table), not settings."""
+    as_mapping(data, where)
     hints = typing.get_type_hints(cls)
-    fields = {f.name: f for f in dataclasses.fields(cls)}
+    fields = {f.name: f for f in dataclasses.fields(cls) if f.init}
     for key in sorted(data):
         if key not in fields:
             raise SettingsError(f"{where}.{key}: unknown setting")
@@ -56,8 +63,8 @@ def _values(
 
 
 def _season(data: object, where: str) -> Season:
-    season = _mapping(data, where)
-    values = _values(Season, season, where, nested={"modifiers"})
+    season = as_mapping(data, where)
+    values = values_for(Season, season, where, nested={"modifiers"})
     raw = season.get("modifiers", [])
     if not isinstance(raw, list):
         raise SettingsError(f"{where}.modifiers: expected a list")
@@ -72,8 +79,8 @@ def _season(data: object, where: str) -> Season:
 
 
 def _calendar(data: object, where: str) -> Calendar:
-    calendar = _mapping(data, where)
-    values = _values(Calendar, calendar, where, nested={"seasons"})
+    calendar = as_mapping(data, where)
+    values = values_for(Calendar, calendar, where, nested={"seasons"})
     raw = calendar["seasons"]
     if not isinstance(raw, list):
         raise SettingsError(f"{where}.seasons: expected a list")
@@ -85,8 +92,8 @@ def _calendar(data: object, where: str) -> Calendar:
 
 
 def engine_config_from_mapping(data: object, where: str = "engine") -> EngineConfig:
-    engine = _mapping(data, where)
-    values = _values(EngineConfig, engine, where, nested={"calendar"})
+    engine = as_mapping(data, where)
+    values = values_for(EngineConfig, engine, where, nested={"calendar"})
     if "calendar" in engine:
         values["calendar"] = _calendar(engine["calendar"], f"{where}.calendar")
     try:
@@ -95,12 +102,30 @@ def engine_config_from_mapping(data: object, where: str = "engine") -> EngineCon
         raise SettingsError(f"{where}: {error}") from None
 
 
-def load_settings(path: Path) -> EngineConfig:
+def agent_config_from_mapping(data: object, where: str = "agents") -> AgentConfig:
+    agents = as_mapping(data, where)
+    values = values_for(AgentConfig, agents, where, nested=set())
+    try:
+        return AgentConfig(**values)
+    except ValueError as error:
+        raise SettingsError(f"{where}: {error}") from None
+
+
+def _read(path: Path) -> dict[str, Any]:
     try:
         raw = read_yaml(path)
     except ContentError as error:
         raise SettingsError(str(error)) from None
+    as_mapping(raw, "settings")
     for key in sorted(raw):
         if key not in SECTIONS:
             raise SettingsError(f"{key}: unknown section")
-    return engine_config_from_mapping(raw.get("engine", {}))
+    return raw
+
+
+def load_settings(path: Path) -> EngineConfig:
+    return engine_config_from_mapping(_read(path).get("engine", {}))
+
+
+def load_agent_settings(path: Path) -> AgentConfig:
+    return agent_config_from_mapping(_read(path).get("agents", {}))

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from pericles.core.modifiers import Modifier
 
@@ -33,6 +33,7 @@ class Calendar:
     day_minutes: int = 1440
     sunrise_minute: int = 360
     sunset_minute: int = 1200
+    _by_day: tuple[Season, ...] = field(init=False, repr=False, compare=False, default=())
 
     def __post_init__(self) -> None:
         if not self.seasons:
@@ -43,6 +44,8 @@ class Calendar:
             raise ValueError("tick_minutes must be positive and divide day_minutes")
         if not 0 <= self.sunrise_minute < self.sunset_minute <= self.day_minutes:
             raise ValueError("need 0 <= sunrise_minute < sunset_minute <= day_minutes")
+        table = tuple(season for season in self.seasons for _ in range(season.days))
+        object.__setattr__(self, "_by_day", table)
 
     @property
     def ticks_per_day(self) -> int:
@@ -77,4 +80,8 @@ class Calendar:
         )
 
     def season_at(self, tick: int) -> Season:
-        return self._locate(tick)[3]
+        """The season of `tick`, from a per-day table built once (same answer as `time_of`)."""
+        if tick < 0:
+            raise ValueError("tick must be non-negative")
+        day = tick * self.tick_minutes // self.day_minutes
+        return self._by_day[day % len(self._by_day)]

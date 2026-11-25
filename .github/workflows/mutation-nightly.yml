@@ -19,7 +19,10 @@ jobs:
       - name: Install
         run: uv sync --locked
       - name: Mutation testing (full)
-        run: uv run python -m pericles_tools.mutation_gate run
+        # cap each process at 2 GiB so a runaway mutant fails instead of exhausting the runner
+        run: |
+          ulimit -d 2097152
+          uv run python -m pericles_tools.mutation_gate run
 
   viewer:
     runs-on: ubuntu-latest

@@ -39,5 +39,15 @@ def test_mutation_runs_incrementally_on_prs_and_fully_nightly() -> None:
     """AC2: changed modules on PRs; full run nightly (Python and viewer)."""
     assert "mutation_gate run --changed-since" in run_commands(".github/workflows/ci.yml")
     nightly = run_commands(".github/workflows/mutation-nightly.yml")
-    assert "mutation_gate run\n" in nightly + "\n"
+    assert "mutation_gate run" in nightly
+    assert "--changed-since" not in nightly
     assert "pnpm mutation" in nightly
+
+
+def test_mutation_runs_cap_memory_per_process() -> None:
+    """Both mutation runs cap each process's memory, so a runaway mutant fails instead of
+    taking the runner down."""
+    for workflow in (".github/workflows/ci.yml", ".github/workflows/mutation-nightly.yml"):
+        commands = run_commands(workflow)
+        assert "ulimit -d 2097152\n" in commands
+        assert commands.index("ulimit -d") < commands.index("mutation_gate run")

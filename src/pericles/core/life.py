@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from pericles.core.buildings import building_tiles, near
+from collections.abc import Callable, Sequence
+
+from pericles.core.buildings import near_footprint
 from pericles.core.content.schema import NeedDef
 from pericles.core.context import Context, reject
 from pericles.core.events import EventSink
@@ -18,24 +20,39 @@ def per_tick(ctx: Context, per_hour: float) -> float:
     return per_hour * ctx.config.calendar.tick_minutes / MINUTES_PER_HOUR
 
 
-def need_rate(ctx: Context, state: WorldState, villager: Villager, need: NeedDef) -> float:
-    """The need's per-hour rate after world, season and trait modifiers."""
-    registry = ctx.registry
-    modifiers = list(state.modifiers)
-    modifiers.extend(ctx.config.calendar.season_at(state.tick).modifiers)
-    for trait in villager.traits:
-        modifiers.extend(
-            Modifier.from_def(m, f"trait:{trait}") for m in registry.traits[trait].modifiers
-        )
-    return resolve(
-        modifiers,
-        kind="need",
-        ident=need.id,
-        attribute="rate",
-        base=need.rate_per_hour,
-        tick=state.tick,
-        villager=villager.id,
-    ).value
+RateTable = Callable[[Villager, NeedDef], float]
+
+
+def rate_table(ctx: Context, state: WorldState) -> RateTable:
+    """Need rates for this tick; cached by (need, traits) when no modifier names a villager.
+
+    Modifiers apply in the order world, season, traits, as `resolve` keeps list order.
+    """
+    shared = _tick_modifiers(ctx, state)
+    personal = _names_a_villager(shared)
+    cache: dict[tuple[str, tuple[str, ...]], float] = {}
+
+    def rate(villager: Villager, need: NeedDef) -> float:
+        key = (need.id, villager.traits)
+        if not personal and key in cache:
+            return cache[key]
+        modifiers = list(shared)
+        for trait in villager.traits:
+            modifiers.extend(ctx.traits[trait])
+        value = resolve(
+            modifiers,
+            kind="need",
+            ident=need.id,
+            attribute="rate",
+            base=need.rate_per_hour,
+            tick=state.tick,
+            villager=villager.id,
+        ).value
+        if not personal:
+            cache[key] = value
+        return value
+
+    return rate
 
 
 def at_home(ctx: Context, state: WorldState, villager: Villager) -> bool:
@@ -45,59 +62,127 @@ def at_home(ctx: Context, state: WorldState, villager: Villager) -> bool:
     return (
         home is not None
         and home.complete
-        and near(villager.pos, building_tiles(home, ctx.registry))
+        and near_footprint(villager.pos, home.origin, ctx.registry.buildings[home.kind].footprint)
     )
+
+
+def home_bounds(ctx: Context, state: WorldState) -> dict[str, tuple[int, int, int, int]]:
+    """(x0, y0, x1, y1), the corner tiles, of every complete building with a footprint: where
+    `at_home` can be true."""
+    kinds = ctx.registry.buildings
+    found = {}
+    for b in state.buildings.values():
+        width, height = kinds[b.kind].footprint
+        if b.complete and width > 0 and height > 0:
+            x, y = b.origin
+            found[b.id] = (x, y, x + width - 1, y + height - 1)
+    return found
+
+
+def _tick_modifiers(ctx: Context, state: WorldState) -> tuple[Modifier, ...]:
+    """World modifiers, then the season's: the part of every need rate shared this tick."""
+    return (*state.modifiers, *ctx.config.calendar.season_at(state.tick).modifiers)
+
+
+def _names_a_villager(modifiers: tuple[Modifier, ...]) -> bool:
+    return any(m.scope.villager is not None for m in modifiers)
+
+
+def rate_rows(
+    ctx: Context, state: WorldState, needs: Sequence[NeedDef]
+) -> Callable[[Villager], list[float]]:
+    """Each villager's `rate_table` rate per need, in `needs` order. Villagers with the same
+    traits share one row unless a modifier names a villager."""
+    rate = rate_table(ctx, state)
+    if _names_a_villager(_tick_modifiers(ctx, state)):
+        return lambda villager: [rate(villager, need) for need in needs]
+    rows: dict[tuple[str, ...], list[float]] = {}
+
+    def row(villager: Villager) -> list[float]:
+        found = rows.get(villager.traits)
+        if found is None:
+            found = rows[villager.traits] = [rate(villager, need) for need in needs]
+        return found
+
+    return row
 
 
 def sleeping(villager: Villager) -> bool:
     return villager.activity is not None and villager.activity.kind == SLEEP
 
 
-def _hourly_change(
-    ctx: Context, state: WorldState, villager: Villager, need: NeedDef, home: bool
-) -> float:
-    config = ctx.config
-    if need.relief == "sleep" and sleeping(villager):
-        boost = config.home_sleep_multiplier if home else 1.0
-        return -config.sleep_relief_per_hour * boost
-    if need.relief == "shelter" and home:
-        return -config.shelter_relief_per_hour
-    return need_rate(ctx, state, villager, need)
-
-
 def update_needs(ctx: Context, state: WorldState, sink: EventSink) -> list[tuple[str, str]]:
-    """Advance every villager's needs and health; return (villager, cause) for the dying."""
+    """Advance every villager's needs and health; return (villager, cause) for the dying.
+
+    Per need and tick: sleep relieves a sleeper's sleep need (boosted at home), shelter
+    relieves a villager at home, and otherwise the need grows at its modified rate.
+    """
     config = ctx.config
     needs = [ctx.registry.needs[k] for k in sorted(ctx.registry.needs)]
+    sleep_needs = [n.id for n in needs if n.relief == SLEEP]
+    regen = per_tick(ctx, config.health_regen_per_hour)
+    home_sleep = -config.sleep_relief_per_hour * config.home_sleep_multiplier
+    away_sleep = -config.sleep_relief_per_hour
+    shelter = -config.shelter_relief_per_hour
+    tick_minutes = config.calendar.tick_minutes
+    # (id, sleep relief?, shelter relief?, critical, damage per tick or None, cause)
+    rows = [
+        (
+            n.id,
+            n.relief == SLEEP,
+            n.relief == "shelter",
+            n.critical,
+            per_tick(ctx, n.damage_per_hour) if n.damage_per_hour > 0 else None,
+            n.death_cause,
+        )
+        for n in needs
+    ]
     dying: list[tuple[str, str]] = []
+    rate_row = rate_rows(ctx, state, needs)
+    bounds = home_bounds(ctx, state)
     for vid in sorted(state.villagers):
         villager = state.villagers[vid]
-        home = at_home(ctx, state, villager)
+        home = False
+        if villager.home is not None and villager.home in bounds:
+            # `at_home`: the footprint rectangle is at most one step away.
+            x0, y0, x1, y1 = bounds[villager.home]
+            x, y = villager.pos
+            dx = x0 - x if x < x0 else (x - x1 if x > x1 else 0)
+            dy = y0 - y if y < y0 else (y - y1 if y > y1 else 0)
+            home = dx + dy <= 1
+        asleep = sleeping(villager)
+        levels = villager.needs
         damage = 0.0
         causes: list[str] = []
-        for need in needs:
-            before = villager.needs.get(need.id, 0.0)
-            change = per_tick(ctx, _hourly_change(ctx, state, villager, need, home))
-            level = min(need.critical, max(0.0, before + change))
-            villager.needs[need.id] = level
-            if level < need.critical:
+        grows = rate_row(villager)
+        for row, grow in zip(rows, grows, strict=True):
+            nid, by_sleep, by_shelter, critical, harm, cause = row
+            if by_sleep and asleep:
+                hourly = home_sleep if home else away_sleep
+            elif by_shelter and home:
+                hourly = shelter
+            else:
+                hourly = grow
+            before = levels.get(nid, 0.0)
+            level = before + hourly * tick_minutes / MINUTES_PER_HOUR
+            level = level if level > 0.0 else 0.0  # max(0.0, level), without the call
+            level = level if level < critical else critical  # min(critical, level)
+            levels[nid] = level
+            if level < critical:
                 continue
-            if before < need.critical:
-                sink.emit("need_critical", actor=vid, need=need.id)
-            if need.damage_per_hour > 0:
-                assert need.death_cause is not None  # registry rule (ADR-0015 §2)
-                damage += per_tick(ctx, need.damage_per_hour)
-                causes.append(need.death_cause)
+            if before < critical:
+                sink.emit("need_critical", actor=vid, need=nid)
+            if harm is not None:
+                assert cause is not None  # registry rule (ADR-0015 §2)
+                damage += harm
+                causes.append(cause)
         if causes:
             villager.damage += damage
         else:
-            regen = per_tick(ctx, config.health_regen_per_hour)
             villager.damage = max(0.0, villager.damage - regen)
         if causes and villager.damage >= config.max_health:
             dying.append((vid, causes[0]))
-        elif sleeping(villager) and all(
-            villager.needs[n.id] <= 0 for n in needs if n.relief == SLEEP
-        ):
+        elif asleep and all(levels[n] <= 0 for n in sleep_needs):
             villager.activity = None
             sink.emit("woke", actor=vid)
     return dying

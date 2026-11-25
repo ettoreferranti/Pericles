@@ -42,7 +42,7 @@ Must · M2 · Accepted
 - AC2: Reflection outputs are validated and applied atomically. Invalid reflection is skipped and logged.
 
 ### REQ-AGT-008: Scripted behaviour
-Must · M1 · Accepted
+Must · M1 · Implemented
 - AC1: A utility-AI behaviour exists that keeps a villager alive (eat when hungry, sleep when tired, work by skill otherwise).
 - AC2: It is used for children, as the LLM fallback, and for an all-scripted baseline experiment.
 

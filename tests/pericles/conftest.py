@@ -1,5 +1,6 @@
 # ruff: noqa: E501 (the econ pack keeps one content record per line)
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
+from typing import Any
 
 import pytest
 
@@ -159,7 +160,7 @@ def life(tmp_path_factory: pytest.TempPathFactory) -> Registry:
     return load_registry([base, extra])
 
 
-TERRAIN = {".": "grass", "~": "water", "T": "forest"}
+TERRAIN = {".": "grass", "~": "water", "T": "forest", "R": "rock"}
 
 
 @pytest.fixture
@@ -175,3 +176,39 @@ def make_world() -> Callable[..., WorldState]:
         return WorldState.new(seed, tilemap, villagers, nodes=nodes)
 
     return make
+
+
+class FailureLog:
+    """Each failed (villager, remembered target) the controller is about to learn from, by
+    tick: read it after `engine.step` and before `controller.observe`."""
+
+    WATCHED = ("move_failed", "intent_rejected")
+
+    def __init__(self) -> None:
+        self.failures: list[tuple[int, str, str]] = []
+
+    def record(self, memory: Mapping[str, Any], tick: int, events: Iterable[Any]) -> None:
+        for event in events:
+            interrupted = event.kind == "work_interrupted" and event.data.get("cause") == "engine"
+            if event.kind not in self.WATCHED and not interrupted:
+                continue
+            actor = str(event.data.get("actor"))
+            mind = memory.get(actor)
+            if mind is not None and mind.target is not None:
+                self.failures.append((tick, actor, mind.target))
+
+    def repeats(self, window: int) -> list[tuple[int, str, str]]:
+        """Failures of a (villager, target) less than `window` ticks after the last one."""
+        last: dict[tuple[str, str], int] = {}
+        found = []
+        for tick, actor, target in self.failures:
+            before = last.get((actor, target))
+            if before is not None and tick - before < window:
+                found.append((tick, actor, target))
+            last[(actor, target)] = tick
+        return found
+
+
+@pytest.fixture
+def failure_log() -> Callable[[], FailureLog]:
+    return FailureLog

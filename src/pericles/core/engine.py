@@ -39,6 +39,14 @@ from pericles.core.state import WorldState
 Handler = Callable[[WorldState, Intent, EventSink], None]
 
 
+def _in_order(intents: Sequence[Intent]) -> list[Intent]:
+    """`intents` sorted by `Intent.sort_key`. While no two share an actor and a kind, the
+    canonical JSON at the end of the key never decides, so it is not built."""
+    if len({(i.actor, i.kind) for i in intents}) == len(intents):
+        return sorted(intents, key=lambda i: (i.actor, i.kind))
+    return sorted(intents, key=lambda i: i.sort_key())
+
+
 class Engine:
     def __init__(self, registry: Registry, config: EngineConfig | None = None) -> None:
         self.registry = registry
@@ -61,9 +69,11 @@ class Engine:
             ProposeCouple: partial(lifecycle.propose_couple, self.context),
             AcceptCouple: partial(lifecycle.accept_couple, self.context),
         }
-        self._cache: tuple[TileMap, frozenset[Coord], TerrainCostField] | None = (
+        self._cache: tuple[TileMap, tuple[tuple[str, str, Coord], ...], TerrainCostField] | None = (
             None  # pragma: no mutate - cache sentinel; any non-matching value just forces a rebuild
         )
+        self._path_scope: tuple[TerrainCostField, int] | None = None
+        self._paths: dict[tuple[Coord, Coord], list[Coord] | None] = {}
 
     def register(self, intent_type: type[Intent], handler: Handler) -> None:
         self._handlers[intent_type] = handler
@@ -81,7 +91,7 @@ class Engine:
     def step(self, state: WorldState, intents: Sequence[Intent]) -> tuple[WorldState, list[Event]]:
         sink = EventSink(state.tick)
         before = item_totals(state) if self.config.debug_invariants else None
-        ordered = sorted(intents, key=lambda i: i.sort_key())
+        ordered = _in_order(intents)
         state.rng.shuffle(ordered)
         acted: set[str] = set()
         for intent in ordered:
@@ -139,19 +149,40 @@ class Engine:
                 work.complete(self.context, state, villager, sink)
 
     def _cost_field(self, state: WorldState) -> TerrainCostField:
-        """Cached per tilemap object and blocked-tile set (ADR-0014 §7)."""
-        blocked = construction.blocked_tiles(self.context, state)
+        """Cached per tilemap object and building layout (ADR-0014 §7).
+
+        Blocked tiles depend only on each building's id, kind and origin, none of which change
+        once it is placed, so the layout is the cache key."""
+        layout = tuple((b.id, b.kind, b.origin) for b in state.buildings.values())
         cache = self._cache
-        if cache is not None and cache[0] is state.tilemap and cache[1] == blocked:
+        if cache is not None and cache[0] is state.tilemap and cache[1] == layout:
             return cache[2]
+        blocked = construction.blocked_tiles(self.context, state)
         field = TerrainCostField(state.tilemap, self.registry, blocked.__contains__)
-        self._cache = (state.tilemap, blocked, field)
+        self._cache = (state.tilemap, layout, field)
         return field
+
+    def _path(self, state: WorldState, start: Coord, goal: Coord) -> list[Coord] | None:
+        """`find_path` on the current cost field, remembered for the rest of the day.
+
+        A path depends only on the field, start and goal, so a remembered one is the same
+        path; starting afresh each day and with each new field bounds what is kept. Callers
+        must not change the returned list."""
+        field = self._cost_field(state)
+        day = state.tick // self.config.calendar.ticks_per_day
+        scope = self._path_scope
+        if scope is None or scope[0] is not field or scope[1] != day:
+            self._path_scope = (field, day)
+            self._paths = {}
+        key = (start, goal)
+        if key not in self._paths:
+            self._paths[key] = find_path(field, start, goal)
+        return self._paths[key]
 
     def _move_to(self, state: WorldState, intent: Intent, sink: EventSink) -> None:
         assert isinstance(intent, MoveTo)
         villager = state.villagers[intent.actor]
-        path = find_path(self._cost_field(state), villager.pos, intent.target)
+        path = self._path(state, villager.pos, intent.target)
         villager.move_progress = 0.0
         if path is None:
             villager.path = []

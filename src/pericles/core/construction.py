@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pericles.core.buildings import (
+    COMMUNAL,
     Building,
     Ownership,
     building_tiles,
@@ -40,7 +41,7 @@ def _occupied(ctx: Context, state: WorldState) -> set[Coord]:
 def _ownership(state: WorldState, intent: PlaceBuilding) -> Ownership | None:
     if any(owner not in state.villagers for owner in intent.co_owners):
         return None
-    if intent.ownership == "communal":
+    if intent.ownership == COMMUNAL:
         owners = intent.co_owners
     else:
         owners = tuple(sorted({intent.actor, *intent.co_owners}))

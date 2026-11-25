@@ -59,6 +59,31 @@ def test_need_rates_are_modified_by_traits_and_world_modifiers(
     assert state.villagers["a"].needs["hunger"] == 2.0
 
 
+@pytest.mark.req("REQ-SIM-012")
+def test_a_modifier_naming_one_villager_changes_only_its_rate(
+    life: Registry, make_world: MakeWorld
+) -> None:
+    """AC1: a villager-scoped modifier applies to that villager only, whoever is asked first."""
+    personal = Modifier(Target("need", "hunger"), "rate", Op.ADD, 60.0, "test", Scope("b"))
+    for first, second in (("a", "b"), ("b", "a")):
+        state = make_world(ROWS, [ana(), Villager("b", "Bo", Coord(1, 0))])
+        state.modifiers = (personal,)
+        ctx = Engine(life).context
+        rate = life_rules.rate_table(ctx, state)
+        hunger = life.needs["hunger"]
+        rates = {vid: rate(state.villagers[vid], hunger) for vid in (first, second)}
+        assert rates == {"a": 60.0, "b": 120.0}
+
+
+@pytest.mark.req("REQ-SIM-012")
+def test_trait_modifiers_are_prepared_once_with_their_source(life: Registry) -> None:
+    """AC1: each trait's modifiers are built once, credited to the trait (as `explain` shows)."""
+    ctx = Engine(life).context
+    hardy = ctx.traits["hardy"]
+    assert hardy and all(m.source == "trait:hardy" for m in hardy)
+    assert set(ctx.traits) == set(life.traits)
+
+
 @pytest.mark.req("REQ-SIM-003")
 def test_winter_multiplies_need_rates(life: Registry, make_world: MakeWorld) -> None:
     """AC2: in winter the food and warmth need rates are multiplied by the winter modifiers."""
@@ -262,6 +287,29 @@ def test_an_unfinished_or_missing_home_gives_no_shelter(
     assert not life_rules.at_home(ctx, state, state.villagers["a"])
     state.villagers["a"].home = "b9"
     assert not life_rules.at_home(ctx, state, state.villagers["a"])
+
+
+@pytest.mark.req("REQ-SIM-012")
+@pytest.mark.parametrize(("complete", "kind"), [(True, "lodge"), (True, "cabin"), (False, "lodge")])
+def test_needs_shelter_exactly_where_at_home_is_true(
+    life: Registry, make_world: MakeWorld, complete: bool, kind: str
+) -> None:
+    """AC1: on every tile of the map, cold falls by the shelter rate exactly when `at_home`
+    holds (next to or on a completed home, 2x2 or 1x1), and rises everywhere else."""
+    state = make_world(ROWS, [ana(needs={"cold": 10.0}, home="b0")])
+    house = lodge(state)
+    house.complete, house.kind = complete, kind
+    engine = Engine(life, EngineConfig(shelter_relief_per_hour=120.0))
+    villager = state.villagers["a"]
+    sheltered = []
+    for x in range(len(ROWS[0])):
+        for y in range(len(ROWS)):
+            villager.pos, villager.needs["cold"] = Coord(x, y), 10.0
+            home = life_rules.at_home(engine.context, state, villager)
+            life_rules.update_needs(engine.context, state, _sink())
+            assert (villager.needs["cold"] < 10.0) == home, (x, y)
+            sheltered.append(home)
+    assert any(sheltered) == complete
 
 
 def test_per_tick_scales_by_tick_minutes(life: Registry) -> None:

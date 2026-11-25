@@ -1,10 +1,12 @@
-"""Drive the engine, persist each tick, snapshot, and resume after crashes (REQ-EXP-003)."""
+"""Drive engine and agents, persist each tick, snapshot, resume after crashes (REQ-EXP-003)."""
 
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
+from typing import Any, Protocol
 
 from pericles.core.engine import Engine
+from pericles.core.events import Event
 from pericles.core.intents import Intent
 from pericles.core.state import WorldState
 from pericles.experiment.rundir import RunDirectory, RunDirectoryError
@@ -12,13 +14,39 @@ from pericles.experiment.rundir import RunDirectory, RunDirectoryError
 IntentSource = Callable[[WorldState], Sequence[Intent]]
 
 
+class Agents(Protocol):
+    def intents(self, state: WorldState) -> Sequence[Intent]: ...
+
+    def observe(self, state: WorldState, events: Sequence[Event]) -> None: ...
+
+    def to_dict(self) -> dict[str, Any]: ...
+
+
+class SourceAgents:
+    """A plain intent function (tests, replays) as stateless agents."""
+
+    def __init__(self, source: IntentSource) -> None:
+        self.source = source
+
+    def intents(self, state: WorldState) -> Sequence[Intent]:
+        return self.source(state)
+
+    def observe(self, state: WorldState, events: Sequence[Event]) -> None:
+        return None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {}
+
+
 def run(
     run_dir: RunDirectory,
     engine: Engine,
     state: WorldState,
-    source: IntentSource,
+    agents: Agents,
     until_tick: int,
     snapshot_every: int,
+    *,
+    stop_when_extinct: bool = True,
 ) -> WorldState:
     if snapshot_every < 1:
         raise ValueError("snapshot_every must be at least 1")
@@ -26,20 +54,33 @@ def run(
         raise ValueError(f"until_tick {until_tick} is before the current tick {state.tick}")
     log = run_dir.event_log
     if state.tick % snapshot_every == 0 and state.tick not in run_dir.snapshot_ticks():
-        run_dir.save_snapshot(state)
+        run_dir.save_snapshot(state, agents.to_dict())
     while state.tick < until_tick:
-        intents = source(state)
-        state, events = engine.step(state, intents)
+        if stop_when_extinct and not state.villagers:
+            run_dir.save_snapshot(state, agents.to_dict())
+            break
+        state, events = engine.step(state, agents.intents(state))
+        agents.observe(state, events)
         log.append_tick(state.tick - 1, events)
         if state.tick % snapshot_every == 0:
-            run_dir.save_snapshot(state)
+            run_dir.save_snapshot(state, agents.to_dict())
     return state
 
 
-def resume(run_dir: RunDirectory) -> WorldState:
-    snapshot = run_dir.latest_snapshot()
-    if snapshot is None:
-        raise RunDirectoryError(f"{run_dir.path}: no snapshot to resume from")
-    state = WorldState.from_dict(snapshot)
-    run_dir.event_log.truncate_after(state.tick - 1)
-    return state
+def resume(run_dir: RunDirectory) -> tuple[WorldState, dict[str, Any]]:
+    """Restore the newest usable snapshot the event log covers; truncate the log to it."""
+    last = run_dir.event_log.last_tick()
+    logged = 0 if last is None else last + 1
+    for snapshot in run_dir.snapshots():
+        path = run_dir.snapshot_path(snapshot.tick)
+        if snapshot.tick > logged:
+            run_dir.skipped.append(path)
+            continue
+        try:
+            state = WorldState.from_dict(snapshot.world)
+        except (KeyError, TypeError, ValueError, AttributeError):
+            run_dir.skipped.append(path)
+            continue
+        run_dir.event_log.truncate_after(state.tick - 1)
+        return state, snapshot.agents
+    raise RunDirectoryError(f"{run_dir.path}: no usable snapshot to resume from")

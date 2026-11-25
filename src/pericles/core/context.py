@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 
 from pericles.core.config import EngineConfig
 from pericles.core.content.registry import Registry
 from pericles.core.events import EventSink
 from pericles.core.intents import Intent
+from pericles.core.modifiers import Modifier
 from pericles.core.state import Villager, WorldState
 
 
@@ -16,6 +18,7 @@ class Context:
     registry: Registry
     config: EngineConfig
     locked: frozenset[str]
+    traits: Mapping[str, tuple[Modifier, ...]]
 
     @classmethod
     def build(cls, registry: Registry, config: EngineConfig) -> Context:
@@ -23,7 +26,11 @@ class Context:
         for tech in registry.technologies.values():
             locked.update(tech.unlocks_recipes)
             locked.update(tech.unlocks_buildings)
-        return cls(registry, config, frozenset(locked))
+        traits = {
+            trait: tuple(Modifier.from_def(m, f"trait:{trait}") for m in definition.modifiers)
+            for trait, definition in registry.traits.items()
+        }
+        return cls(registry, config, frozenset(locked), traits)
 
     def available(self, state: WorldState, villager: Villager, ident: str) -> bool:
         """A recipe or building is available unless a technology unlocks it and it is unknown."""

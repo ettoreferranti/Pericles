@@ -8,7 +8,17 @@ experimenter can change during a run.
 - Requirements: [docs/requirements/](docs/requirements/README.md)
 - Architecture decisions: [docs/adr/](docs/adr/README.md)
 
-Status: M1c Life and population complete; M1d Running villages next.
+Status: M1 Headless sim is done (M1a to M1d), with every M1 requirement Implemented, including REQ-NFR-003 (at least 1000 scripted ticks/s with 150 villagers on a 128×128 map). Next is M2, LLM minds.
+
+## Run a village
+
+```bash
+uv run pericles run experiments/baseline.yaml --out runs/baseline
+uv run pericles resume runs/baseline --days 90
+PYTHONPATH=tools uv run python -m pericles_tools.bench     # REQ-NFR-003 check
+uv run pytest -m long                                      # baseline village tests
+uv run pytest -m perf                                      # perf test (target machine)
+```
 
 ## Development
 

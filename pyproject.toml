@@ -5,9 +5,13 @@ description = "A research sandbox: a village society whose villagers are driven 
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "pyarrow>=17",
     "pydantic>=2.9,<3",
     "pyyaml>=6.0",
 ]
+
+[project.scripts]
+pericles = "pericles.experiment.cli:main"
 
 [build-system]
 requires = ["hatchling"]
@@ -29,10 +33,12 @@ dev = [
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["tools"]
-addopts = "--strict-markers -m 'not slow'"
+addopts = "--strict-markers -m 'not slow and not perf and not long'"
 markers = [
     "req(*ids): links a test to one or more requirement IDs (REQ-<AREA>-NNN)",
     "slow: needs live external services such as Ollama; excluded by default",
+    "perf: performance measurements; excluded by default",
+    "long: multi-minute whole-village runs; excluded by default, run in CI with -m long",
 ]
 
 [tool.mypy]
@@ -41,6 +47,10 @@ plugins = ["pydantic.mypy"]
 python_version = "3.12"
 files = ["src", "tools", "tests"]
 mypy_path = "tools"
+
+[[tool.mypy.overrides]]
+module = ["pyarrow", "pyarrow.*"]
+ignore_missing_imports = true
 
 [tool.ruff]
 line-length = 100
@@ -58,3 +68,5 @@ known-first-party = ["pericles", "pericles_tools"]
 [tool.mutmut]
 source_paths = ["src/pericles"]
 pytest_add_cli_args_test_selection = ["tests/pericles"]
+# tests load experiments/baseline.yaml relative to the repo root
+also_copy = ["experiments"]
