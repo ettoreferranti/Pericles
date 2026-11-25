@@ -140,18 +140,50 @@ class NodeIndex:
         return rings
 
 
+Reach = frozenset[int] | None  # the regions a walker may enter; None for anywhere
+
+
 class OriginCache:
     """Free site origins kept across ticks while the inputs `free_origin` reads are unchanged:
-    the tilemap, the nodes, the buildings (id, kind, origin) and the village centre."""
+    the tilemap, the nodes, the buildings (id, kind, origin) and the village centre. The
+    regions of the walkable field (`regions`) depend on fewer of them, so they are kept with
+    the origins and worked out again only when the key changes."""
 
     def __init__(self) -> None:
         self.key: tuple[object, ...] | None = None
-        self.origins: dict[str, Coord | None] = {}
+        self.origins: dict[tuple[str, Reach], Coord | None] = {}
+        self.regions: list[int] | None = None
 
-    def lookup(self, key: tuple[object, ...]) -> dict[str, Coord | None]:
+    def lookup(self, key: tuple[object, ...]) -> dict[tuple[str, Reach], Coord | None]:
         if key != self.key:
-            self.key, self.origins = key, {}
+            self.key, self.origins, self.regions = key, {}, None
         return self.origins
+
+
+def regions(walkable: Sequence[bool], width: int, height: int) -> list[int]:
+    """A label per tile (`y * width + x`): walkable tiles joined by 4-neighbour steps share
+    one, labelled 0, 1, ... in row order of their first tile; impassable tiles get -1."""
+    labels = [-1] * (width * height)
+    label = 0
+    for first in range(width * height):
+        if not walkable[first] or labels[first] >= 0:
+            continue
+        labels[first] = label
+        stack = [first]
+        while stack:
+            tile = stack.pop()
+            x = tile % width
+            for nb in (
+                tile - width if tile >= width else -1,
+                tile + 1 if x + 1 < width else -1,
+                tile + width if tile + width < width * height else -1,
+                tile - 1 if x > 0 else -1,
+            ):
+                if nb >= 0 and walkable[nb] and labels[nb] < 0:
+                    labels[nb] = label
+                    stack.append(nb)
+        label += 1
+    return labels
 
 
 class View:
@@ -192,7 +224,7 @@ class View:
         self._stock: float | None = None
         self._stored: dict[tuple[str, ...], float] = {}
         self._origin_cache = origins if origins is not None else OriginCache()
-        self._origins: dict[str, Coord | None] | None = None
+        self._origins: dict[tuple[str, Reach], Coord | None] | None = None
         self._occupancy: dict[str, int] | None = None
         self._sites: tuple[Building, ...] | None = None
         self._storage: tuple[Building, ...] | None = None
@@ -504,7 +536,8 @@ class View:
         )
 
     def house_for(self, villager: Villager) -> Building | None:
-        """A complete house this villager may live in with room for it, the partner's first."""
+        """A complete house this villager may live in with room for it and does not avoid,
+        the partner's first."""
         registry = self.ctx.registry
         buildings = self.state.buildings
         partner = self.state.villagers.get(villager.partner) if villager.partner else None
@@ -516,7 +549,9 @@ class View:
                 partner is not None and b.ownership.owned_by(partner.id)
             )
             room = villager.home == b.id or self.occupants(b.id) + incoming <= housing
-            return b.complete and housing > 0 and allowed and room
+            return (
+                b.complete and housing > 0 and allowed and room and not self.avoided(villager, b.id)
+            )
 
         if partner is not None and partner.home in buildings and fits(buildings[partner.home]):
             return buildings[partner.home]
@@ -683,15 +718,48 @@ class View:
         )
         return stores[0].origin if stores else self.state.tilemap.start()
 
-    def free_origin(self, kind: str) -> Coord | None:
-        """The clear footprint origin nearest the village centre, with `site_gap` around it."""
+    def _origin_table(self) -> dict[tuple[str, Reach], Coord | None]:
+        """This tick's entry in the `OriginCache`, looked up once a tick."""
         if self._origins is None:
             state = self.state
             buildings = tuple((b.id, b.kind, b.origin) for b in state.buildings.values())
             key = (state.tilemap, state.nodes, buildings, self.center())
             self._origins = self._origin_cache.lookup(key)
-        if kind in self._origins:
-            return self._origins[kind]
+        return self._origins
+
+    def _regions(self) -> list[int]:
+        """`regions` of the walkable field, kept in the `OriginCache`."""
+        self._origin_table()
+        cache = self._origin_cache
+        if cache.regions is None:
+            tilemap = self.state.tilemap
+            width = tilemap.width
+            walkable = [
+                self.walkable(Coord(i % width, i // width)) for i in range(width * tilemap.height)
+            ]
+            cache.regions = regions(walkable, width, tilemap.height)
+        return cache.regions
+
+    def reach(self, start: Coord) -> frozenset[int]:
+        """The regions a walk from `start` may enter: its own and those beside it (a path
+        may begin on an impassable tile)."""
+        tilemap = self.state.tilemap
+        labels = self._regions()
+        return frozenset(
+            labels[c.y * tilemap.width + c.x]
+            for c in (start, *start.neighbours4())
+            if tilemap.in_bounds(c) and labels[c.y * tilemap.width + c.x] >= 0
+        )
+
+    def free_origin(self, kind: str, start: Coord | None = None) -> Coord | None:
+        """The clear footprint origin nearest the village centre, with `site_gap` around it;
+        with `start`, only one a walk from `start` can reach."""
+        origins = self._origin_table()
+        reach = None if start is None else self.reach(start)
+        if (kind, reach) in origins:
+            return origins[(kind, reach)]
+        labels: Sequence[int] = () if reach is None else self._regions()
+        map_width = self.state.tilemap.width
         width, height = self.ctx.registry.buildings[kind].footprint
         gap = self.config.site_gap
         taken = {t for b in self.state.buildings.values() for t in self.tiles(b)}
@@ -711,6 +779,9 @@ class View:
             tiles = footprint(origin, (width, height))
             if not all(self.walkable(t) and t not in nodes for t in tiles):
                 continue
+            # A walkable footprint lies in one region: the origin's.
+            if reach is not None and labels[origin.y * map_width + origin.x] not in reach:
+                continue
             margin = footprint(
                 Coord(origin.x - gap, origin.y - gap), (width + gap + gap, height + gap + gap)
             )
@@ -718,7 +789,7 @@ class View:
                 continue
             found = origin
             break
-        self._origins[kind] = found
+        origins[(kind, reach)] = found
         return found
 
     def guardian(self, child: Villager) -> Villager | None:

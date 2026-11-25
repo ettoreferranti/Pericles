@@ -1,5 +1,6 @@
 from collections.abc import Callable
 from dataclasses import dataclass
+from typing import Any
 
 import pytest
 from hypothesis import HealthCheck, given, settings
@@ -35,6 +36,23 @@ ADULT_DAYS = 4
 DAYS = 8
 TICKS, SPLIT = DAYS * PER_DAY, 5 * PER_DAY + 12
 HOUSE_AT = Coord(5, 2)
+# Water rings the house's footprint and the map centre, so some sites, homes, spots and
+# villagers are cut off from the rest.
+RINGED = [
+    "............",
+    "....~~~~....",
+    "....~..~....",
+    "....~..~.TT.",
+    "....~~~~.TT.",
+    ".....~~~~...",
+    "RR...~..~...",
+    "RR...~..~...",
+    ".....~~~~...",
+    "..TT........",
+    "..TT....~~..",
+    "............",
+]
+MAPS = st.sampled_from(["plain", "ringed"])
 
 
 def life_config() -> EngineConfig:
@@ -90,6 +108,7 @@ def build_village(
     spots: list[tuple[str, int, int]],
     house: str,
     pair_up: bool,
+    rows: list[str] = ROWS,
 ) -> WorldState:
     villagers = []
     for i, p in enumerate(people):
@@ -125,14 +144,18 @@ def build_village(
         if house == "complete":
             women[0].home = men[0].home = "h0"
     nodes = [Node(f"n{i}", kind, Coord(x, y), 10) for i, (kind, x, y) in enumerate(spots)]
-    state = make_world(ROWS, villagers, nodes)
+    state = make_world(rows, villagers, nodes)
     for b in buildings:
         state.buildings[b.id] = b
     return state
 
 
 def run(
-    registry: Registry, state: WorldState, ticks: int, split: int | None
+    registry: Registry,
+    state: WorldState,
+    ticks: int,
+    split: int | None,
+    log: Any = None,
 ) -> tuple[
     WorldState,
     Controller,
@@ -148,6 +171,8 @@ def run(
         if tick == split:
             saved = (state.to_dict(), controller.to_dict())
         state, events = engine.step(state, controller.intents(state))
+        if log is not None:
+            log.record(controller.memory, state.tick, events)
         controller.observe(state, events)
         per_tick.append([e.to_dict() for e in events])
     return state, controller, per_tick, saved
@@ -181,21 +206,29 @@ def test_the_short_life_cycle_configuration_reaches_births_and_coming_of_age(
     st.lists(spot, max_size=12),
     HOUSES,
     st.booleans(),
+    MAPS,
 )
 def test_scripted_villages_keep_invariants_and_resume_exactly(
     registry: Registry,
     make_world: MakeWorld,
+    failure_log: Callable[[], Any],
     people: list[Person],
     spots: list[tuple[str, int, int]],
     house: str,
     pair_up: bool,
+    terrain: str,
 ) -> None:
     """AGT-008 AC1 / EXP-003 AC3: any small scripted village across several short days (with
     births and coming of age) keeps the engine's invariants (debug_invariants checks item
-    conservation), and restoring world + agent memory mid-day reproduces the rest of the run."""
-    state = build_village(registry, make_world, people, spots, house, pair_up)
-    state, controller, per_tick, saved = run(registry, state, TICKS, SPLIT)
+    conservation), never retries a target it failed to reach or use within avoid_ticks (some
+    maps wall places off with water), and restoring world + agent memory mid-day reproduces
+    the rest of the run."""
+    rows = RINGED if terrain == "ringed" else ROWS
+    state = build_village(registry, make_world, people, spots, house, pair_up, rows)
+    log = failure_log()
+    state, controller, per_tick, saved = run(registry, state, TICKS, SPLIT, log)
     assert saved is not None
+    assert log.repeats(AgentConfig().avoid_ticks) == []
     tail = [e for tick in per_tick[SPLIT:] for e in tick]
     config = life_config()
     again = WorldState.from_dict(saved[0])

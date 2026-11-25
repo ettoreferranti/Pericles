@@ -158,6 +158,8 @@ def sleep(view: View, villager: Villager) -> Decision | None:
     if level < view.config.act_at[SLEEP]:
         return None
     home = view.home(villager)
+    if home is not None and view.avoided(villager, home.id):
+        home = None  # sleep where it stands, as with no home
     if home is not None and level < view.config.urgent_at[SLEEP] and not view.at_home(villager):
         step = view.go(villager, view.tiles(home))
         if step is not None:
@@ -172,7 +174,7 @@ def shelter(view: View, villager: Villager) -> Decision | None:
     level = view.level(villager, SHELTER)
     if view.at_home(villager):
         return Decision(Wait(villager.id)) if level > view.config.warm_until else None
-    if level < view.config.act_at[SHELTER]:
+    if level < view.config.act_at[SHELTER] or view.avoided(villager, home.id):
         return None
     step = view.go(villager, view.tiles(home))
     return Decision(step, target=home.id) if step is not None else Decision(Wait(villager.id))
@@ -221,6 +223,8 @@ def work(view: View, villager: Villager) -> Decision | None:
 def deliver(view: View, villager: Villager) -> Decision | None:
     registry = view.ctx.registry
     for building in view.sites():
+        if view.avoided(villager, building.id):
+            continue
         remaining = remaining_cost(building, registry)
         for item in sorted(remaining):
             have = villager.inventory.count(item)
@@ -294,7 +298,7 @@ def build(view: View, villager: Villager) -> Decision | None:
         return None
     registry = view.ctx.registry
     for building in view.sites():
-        if remaining_cost(building, registry):
+        if remaining_cost(building, registry) or view.avoided(villager, building.id):
             continue
         if view.builders(building.id, villager.id) >= view.config.max_builders:
             continue
@@ -302,7 +306,7 @@ def build(view: View, villager: Villager) -> Decision | None:
         intent: Intent = step if step is not None else Construct(villager.id, building.id)
         return Decision(intent, target=building.id, job=CONSTRUCT)
     kind = wanted_building(view, villager)
-    origin = view.free_origin(kind) if kind is not None else None
+    origin = view.free_origin(kind, villager.pos) if kind is not None else None
     if kind is None or origin is None:
         return None
     step = view.go(villager, footprint(origin, registry.buildings[kind].footprint))
@@ -318,7 +322,7 @@ def home(view: View, villager: Villager) -> Decision | None:
         if villager.partner is None:
             return None
         house = view.couple_house(villager)
-        if house is None or house.id == villager.home:
+        if house is None or house.id == villager.home or view.avoided(villager, house.id):
             return None
         return Decision(SetHome(villager.id, house.id), target=house.id)
     house = view.house_for(villager)
