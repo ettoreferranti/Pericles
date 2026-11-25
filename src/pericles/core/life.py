@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 
 from pericles.core.buildings import near_footprint
 from pericles.core.content.schema import NeedDef
 from pericles.core.context import Context, reject
 from pericles.core.events import EventSink
 from pericles.core.intents import Eat, Intent, Sleep
-from pericles.core.modifiers import resolve
+from pericles.core.modifiers import Modifier, resolve
 from pericles.core.state import Activity, Villager, WorldState
 
 MINUTES_PER_HOUR = 60
@@ -28,9 +28,8 @@ def rate_table(ctx: Context, state: WorldState) -> RateTable:
 
     Modifiers apply in the order world, season, traits, as `resolve` keeps list order.
     """
-    season = ctx.config.calendar.season_at(state.tick)
-    shared = (*state.modifiers, *season.modifiers)
-    personal = any(m.scope.villager is not None for m in shared)
+    shared = _tick_modifiers(ctx, state)
+    personal = _names_a_villager(shared)
     cache: dict[tuple[str, tuple[str, ...]], float] = {}
 
     def rate(villager: Villager, need: NeedDef) -> float:
@@ -67,6 +66,34 @@ def at_home(ctx: Context, state: WorldState, villager: Villager) -> bool:
     )
 
 
+def _tick_modifiers(ctx: Context, state: WorldState) -> tuple[Modifier, ...]:
+    """World modifiers, then the season's: the part of every need rate shared this tick."""
+    return (*state.modifiers, *ctx.config.calendar.season_at(state.tick).modifiers)
+
+
+def _names_a_villager(modifiers: tuple[Modifier, ...]) -> bool:
+    return any(m.scope.villager is not None for m in modifiers)
+
+
+def rate_rows(
+    ctx: Context, state: WorldState, needs: Sequence[NeedDef]
+) -> Callable[[Villager], list[float]]:
+    """Each villager's `rate_table` rate per need, in `needs` order. Villagers with the same
+    traits share one row unless a modifier names a villager."""
+    rate = rate_table(ctx, state)
+    if _names_a_villager(_tick_modifiers(ctx, state)):
+        return lambda villager: [rate(villager, need) for need in needs]
+    rows: dict[tuple[str, ...], list[float]] = {}
+
+    def row(villager: Villager) -> list[float]:
+        found = rows.get(villager.traits)
+        if found is None:
+            found = rows[villager.traits] = [rate(villager, need) for need in needs]
+        return found
+
+    return row
+
+
 def sleeping(villager: Villager) -> bool:
     return villager.activity is not None and villager.activity.kind == SLEEP
 
@@ -85,10 +112,9 @@ def update_needs(ctx: Context, state: WorldState, sink: EventSink) -> list[tuple
     away_sleep = -config.sleep_relief_per_hour
     shelter = -config.shelter_relief_per_hour
     tick_minutes = config.calendar.tick_minutes
-    # (need, id, sleep relief?, shelter relief?, critical, damage per tick or None, cause)
+    # (id, sleep relief?, shelter relief?, critical, damage per tick or None, cause)
     rows = [
         (
-            n,
             n.id,
             n.relief == SLEEP,
             n.relief == "shelter",
@@ -99,7 +125,7 @@ def update_needs(ctx: Context, state: WorldState, sink: EventSink) -> list[tuple
         for n in needs
     ]
     dying: list[tuple[str, str]] = []
-    rate = rate_table(ctx, state)
+    rate_row = rate_rows(ctx, state, needs)
     for vid in sorted(state.villagers):
         villager = state.villagers[vid]
         home = at_home(ctx, state, villager)
@@ -107,13 +133,15 @@ def update_needs(ctx: Context, state: WorldState, sink: EventSink) -> list[tuple
         levels = villager.needs
         damage = 0.0
         causes: list[str] = []
-        for need, nid, by_sleep, by_shelter, critical, harm, cause in rows:
+        grows = rate_row(villager)
+        for row, grow in zip(rows, grows, strict=True):
+            nid, by_sleep, by_shelter, critical, harm, cause = row
             if by_sleep and asleep:
                 hourly = home_sleep if home else away_sleep
             elif by_shelter and home:
                 hourly = shelter
             else:
-                hourly = rate(villager, need)
+                hourly = grow
             before = levels.get(nid, 0.0)
             level = before + hourly * tick_minutes / MINUTES_PER_HOUR
             level = level if level > 0.0 else 0.0  # max(0.0, level), without the call
