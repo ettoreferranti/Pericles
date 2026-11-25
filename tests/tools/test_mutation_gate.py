@@ -221,3 +221,19 @@ def test_git_diff_failure_fails_the_gate(tmp_path: Path) -> None:
     make_src(tmp_path, with_code=True)
     runner = FailingDiff(results="")
     assert main(["run", "--changed-since", "origin/nope"], runner=runner, root=tmp_path) == 1
+
+
+def test_max_children_is_passed_to_mutmut(tmp_path: Path) -> None:
+    """CI can cap mutmut's parallel workers so the run fits the runner's memory."""
+    make_src(tmp_path, with_code=True)
+    runner = FakeRunner(results="    pericles.core.world.x_f__mutmut_1: killed\n")
+    assert main(["run", "--max-children", "2"], runner=runner, root=tmp_path) == 0
+    assert ["mutmut", "run", "--max-children", "2"] in runner.calls
+
+
+def test_without_max_children_mutmut_picks_its_own(tmp_path: Path) -> None:
+    """With no cap, mutmut runs with its default worker count."""
+    make_src(tmp_path, with_code=True)
+    runner = FakeRunner(results="    pericles.core.world.x_f__mutmut_1: killed\n")
+    assert main(["run"], runner=runner, root=tmp_path) == 0
+    assert ["mutmut", "run"] in runner.calls

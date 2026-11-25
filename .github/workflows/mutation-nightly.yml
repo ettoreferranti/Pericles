@@ -19,7 +19,7 @@ jobs:
       - name: Install
         run: uv sync --locked
       - name: Mutation testing (full)
-        run: uv run python -m pericles_tools.mutation_gate run
+        run: uv run python -m pericles_tools.mutation_gate run --max-children 2
 
   viewer:
     runs-on: ubuntu-latest
