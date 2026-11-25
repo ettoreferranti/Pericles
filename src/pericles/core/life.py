@@ -66,6 +66,19 @@ def at_home(ctx: Context, state: WorldState, villager: Villager) -> bool:
     )
 
 
+def home_bounds(ctx: Context, state: WorldState) -> dict[str, tuple[int, int, int, int]]:
+    """(x0, y0, x1, y1), the corner tiles, of every complete building with a footprint: where
+    `at_home` can be true."""
+    kinds = ctx.registry.buildings
+    found = {}
+    for b in state.buildings.values():
+        width, height = kinds[b.kind].footprint
+        if b.complete and width > 0 and height > 0:
+            x, y = b.origin
+            found[b.id] = (x, y, x + width - 1, y + height - 1)
+    return found
+
+
 def _tick_modifiers(ctx: Context, state: WorldState) -> tuple[Modifier, ...]:
     """World modifiers, then the season's: the part of every need rate shared this tick."""
     return (*state.modifiers, *ctx.config.calendar.season_at(state.tick).modifiers)
@@ -126,9 +139,17 @@ def update_needs(ctx: Context, state: WorldState, sink: EventSink) -> list[tuple
     ]
     dying: list[tuple[str, str]] = []
     rate_row = rate_rows(ctx, state, needs)
+    bounds = home_bounds(ctx, state)
     for vid in sorted(state.villagers):
         villager = state.villagers[vid]
-        home = at_home(ctx, state, villager)
+        home = False
+        if villager.home is not None and villager.home in bounds:
+            # `at_home`: the footprint rectangle is at most one step away.
+            x0, y0, x1, y1 = bounds[villager.home]
+            x, y = villager.pos
+            dx = x0 - x if x < x0 else (x - x1 if x > x1 else 0)
+            dy = y0 - y if y < y0 else (y - y1 if y > y1 else 0)
+            home = dx + dy <= 1
         asleep = sleeping(villager)
         levels = villager.needs
         damage = 0.0

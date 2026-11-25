@@ -289,6 +289,28 @@ def test_an_unfinished_or_missing_home_gives_no_shelter(
     assert not life_rules.at_home(ctx, state, state.villagers["a"])
 
 
+@pytest.mark.req("REQ-SIM-012")
+@pytest.mark.parametrize("complete", [True, False])
+def test_needs_shelter_exactly_where_at_home_is_true(
+    life: Registry, make_world: MakeWorld, complete: bool
+) -> None:
+    """AC1: on every tile of the map, cold falls by the shelter rate exactly when `at_home`
+    holds (next to or on a completed home), and rises everywhere else."""
+    state = make_world(ROWS, [ana(needs={"cold": 10.0}, home="b0")])
+    lodge(state).complete = complete
+    engine = Engine(life, EngineConfig(shelter_relief_per_hour=120.0))
+    villager = state.villagers["a"]
+    sheltered = []
+    for x in range(len(ROWS[0])):
+        for y in range(len(ROWS)):
+            villager.pos, villager.needs["cold"] = Coord(x, y), 10.0
+            home = life_rules.at_home(engine.context, state, villager)
+            life_rules.update_needs(engine.context, state, _sink())
+            assert (villager.needs["cold"] < 10.0) == home, (x, y)
+            sheltered.append(home)
+    assert any(sheltered) == complete
+
+
 def test_per_tick_scales_by_tick_minutes(life: Registry) -> None:
     """Rates are per hour; a 5-minute tick takes a twelfth of the hourly rate."""
     calendar = Calendar(seasons=(Season("year", 1),), tick_minutes=5)
