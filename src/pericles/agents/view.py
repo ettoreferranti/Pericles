@@ -98,20 +98,25 @@ class NodeIndex:
         ox, oy = origin
         cx, cy = ox // self.cell, oy // self.cell
         best: Node | None = None
+        # The best (distance, id) so far; `reach` is its distance (`radius` before any).
+        # `accept` is pure, so it is asked only of nodes that could still win.
         best_key: tuple[int, str] | None = None
+        reach = radius
         rings = self._occupied_rings(kind, cx, cy, radius // self.cell + 1 + 1)
         for ring, keys in enumerate(rings):
-            if best_key is not None and (ring - 1) * self.cell >= best_key[0]:
+            if best_key is not None and (ring - 1) * self.cell >= reach:
                 break
             for key in keys:
                 for node in cells[key]:
                     pos = node.pos
                     distance = abs(ox - pos.x) + abs(oy - pos.y)  # origin.manhattan(pos)
-                    if distance > radius or not accept(node):
+                    if distance > reach:
                         continue
                     candidate = (distance, node.id)
-                    if best_key is None or candidate < best_key:
-                        best, best_key = node, candidate
+                    if best_key is not None and candidate >= best_key:
+                        continue
+                    if accept(node):
+                        best, best_key, reach = node, candidate, distance
         return best
 
     def _occupied_rings(self, kind: str, cx: int, cy: int, count: int) -> Rings:

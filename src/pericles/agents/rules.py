@@ -34,22 +34,13 @@ Rule = Callable[[View, Villager], Decision | None]
 def jobs(view: View, villager: Villager, items: Iterable[str]) -> list[ActionDef]:
     """Node actions producing one of `items` that this villager can start now, by id."""
     wanted = set(items)
-    config = view.ctx.config
-    blocked = config.calendar.season_at(view.tick).blocked_tags
-    child_tags = None if villager.adult else set(config.child_action_tags)
+    child_tags = None if villager.adult else set(view.ctx.config.child_action_tags)
     found = []
-    for action_id in sorted(view.ctx.registry.actions):
-        action = view.ctx.registry.actions[action_id]
+    for action in view.memo(("node_jobs",), lambda: node_jobs(view)):
         requires = action.requires
-        if action.location.node is None or action.location.building is not None:
-            continue
-        if not wanted & set(action.outputs) or action.inputs:
-            continue
-        if any(tag in blocked for tag in action.tags):
+        if not wanted & set(action.outputs):
             continue
         if child_tags is not None and not child_tags & set(action.tags):
-            continue
-        if requires.tools or requires.knowledge or action.location.terrains:
             continue
         if (
             requires.skill is not None
@@ -58,6 +49,24 @@ def jobs(view: View, villager: Villager, items: Iterable[str]) -> list[ActionDef
             continue
         found.append(action)
     return found
+
+
+def node_jobs(view: View) -> tuple[ActionDef, ...]:
+    """Actions at a node, by id, that need no inputs, tools, knowledge or terrain and that
+    the season does not block: the part of `jobs` the same for every villager."""
+    blocked = view.ctx.config.calendar.season_at(view.tick).blocked_tags
+    found = []
+    for action_id in sorted(view.ctx.registry.actions):
+        action = view.ctx.registry.actions[action_id]
+        requires = action.requires
+        if action.location.node is None or action.location.building is not None:
+            continue
+        if action.inputs or any(tag in blocked for tag in action.tags):
+            continue
+        if requires.tools or requires.knowledge or action.location.terrains:
+            continue
+        found.append(action)
+    return tuple(found)
 
 
 def skill_score(view: View, villager: Villager, action: ActionDef) -> float:
