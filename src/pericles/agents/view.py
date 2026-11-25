@@ -191,6 +191,7 @@ class View:
         self._food: dict[str, float] = {}
         self._food_demand: dict[str, float] = {}
         self._memo: dict[Hashable, object] = {}
+        self._held: dict[str, Counter[str]] = {}
         self._jobs: Counter[str] | None = None
         self._targets: Counter[tuple[str | None, str]] | None = None
         self._producing: dict[str, frozenset[str]] = {}
@@ -358,7 +359,7 @@ class View:
             self._stored[key] = sum(
                 items[item].nutrition * qty
                 for building in usable
-                for item, qty in sorted(building.storage.totals().items())
+                for item, qty in sorted(self.held(building).items())
             )
         self._food[villager.id] = self._stored[key]
         return self._stored[key]
@@ -378,6 +379,13 @@ class View:
             known = 0.0 if target <= 0 else max(0.0, target - self.stored_food(villager)) / target
             self._food_demand[villager.id] = known
         return known
+
+    def held(self, building: Building) -> Mapping[str, int]:
+        """`building.storage.totals()`, counted once a tick (missing items count 0)."""
+        found = self._held.get(building.id)
+        if found is None:
+            found = self._held[building.id] = building.storage.totals()
+        return found
 
     def food_target(self) -> float:
         return self.config.food_reserve_per_capita * self.population()

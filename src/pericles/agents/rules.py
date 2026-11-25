@@ -126,9 +126,9 @@ def feed(view: View, villager: Villager) -> Decision | None:
             )
     portions = {food: portion(view, villager, food) for food in view.foods}
     for building in view.stores(villager):
+        stock = view.held(building)
         for food in view.foods:
-            held = building.storage.count(food)
-            qty = min(held, portions[food])
+            qty = min(stock.get(food, 0), portions[food])
             if qty <= 0:
                 continue
             step = view.go(villager, view.tiles(building))

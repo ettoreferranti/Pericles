@@ -16,6 +16,7 @@ from pericles.core.state import Villager, WorldState
 
 FAILURES = ("intent_rejected", "move_failed")
 INTERRUPTED, ENGINE_CAUSE = "work_interrupted", "engine"
+WATCHED = frozenset((*FAILURES, INTERRUPTED))  # the only kinds `_failed` can accept
 ACTION, CONSTRUCTION = "action", "construction"
 
 
@@ -90,7 +91,10 @@ class Controller:
             memory = self.memory.get(vid)
             if memory is None:
                 memory = self.memory[vid] = Memory()
-            if not self._due(view, villager, memory):
+            # Due: idle time over, and either free (no path, no activity) or urgent.
+            if state.tick < memory.idle_until:
+                continue
+            if (villager.path or villager.activity is not None) and not view.urgent(villager):
                 continue
             decision = self._decide(view, villager)
             if decision is None:
@@ -104,13 +108,6 @@ class Controller:
                 continue
             intents.append(decision.intent)
         return intents
-
-    def _due(self, view: View, villager: Villager, memory: Memory) -> bool:
-        if view.tick < memory.idle_until:
-            return False
-        if not villager.path and villager.activity is None:
-            return True
-        return view.urgent(villager)
 
     def _decide(self, view: View, villager: Villager) -> Decision | None:
         if not villager.adult:
@@ -127,7 +124,7 @@ class Controller:
     def observe(self, state: WorldState, events: Sequence[Event]) -> None:
         """Learn from the tick's failures: avoid failed targets, idle on untargeted failures."""
         for event in events:
-            if not _failed(event):
+            if event.kind not in WATCHED or not _failed(event):
                 continue
             memory = self.memory.get(str(event.data.get("actor")))
             if memory is None:
@@ -138,7 +135,8 @@ class Controller:
             else:
                 memory.idle_until = state.tick + self.config.idle_ticks
         for memory in self.memory.values():
-            memory.avoid = {t: until for t, until in memory.avoid.items() if until > state.tick}
+            if memory.avoid:
+                memory.avoid = {t: until for t, until in memory.avoid.items() if until > state.tick}
 
     def to_dict(self) -> dict[str, Any]:
         return {

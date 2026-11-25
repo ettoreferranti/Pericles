@@ -39,6 +39,14 @@ from pericles.core.state import WorldState
 Handler = Callable[[WorldState, Intent, EventSink], None]
 
 
+def _in_order(intents: Sequence[Intent]) -> list[Intent]:
+    """`intents` sorted by `Intent.sort_key`. While no two share an actor and a kind, the
+    canonical JSON at the end of the key never decides, so it is not built."""
+    if len({(i.actor, i.kind) for i in intents}) == len(intents):
+        return sorted(intents, key=lambda i: (i.actor, i.kind))
+    return sorted(intents, key=lambda i: i.sort_key())
+
+
 class Engine:
     def __init__(self, registry: Registry, config: EngineConfig | None = None) -> None:
         self.registry = registry
@@ -83,7 +91,7 @@ class Engine:
     def step(self, state: WorldState, intents: Sequence[Intent]) -> tuple[WorldState, list[Event]]:
         sink = EventSink(state.tick)
         before = item_totals(state) if self.config.debug_invariants else None
-        ordered = sorted(intents, key=lambda i: i.sort_key())
+        ordered = _in_order(intents)
         state.rng.shuffle(ordered)
         acted: set[str] = set()
         for intent in ordered:
