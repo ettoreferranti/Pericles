@@ -7,7 +7,13 @@ import math
 from collections.abc import Iterable
 
 from pericles.core import work
-from pericles.core.buildings import Building, Ownership, housing_capacity, storage_capacity
+from pericles.core.buildings import (
+    COMMUNAL,
+    Building,
+    Ownership,
+    housing_capacity,
+    storage_capacity,
+)
 from pericles.core.context import Context, reject
 from pericles.core.events import Event, EventSink
 from pericles.core.intents import AcceptCouple, Intent, ProposeCouple, SetHome
@@ -45,7 +51,7 @@ def _communal_stores(state: WorldState) -> list[Building]:
     return [
         state.buildings[bid]
         for bid in sorted(state.buildings)
-        if state.buildings[bid].ownership.kind == "communal"
+        if state.buildings[bid].ownership.kind == COMMUNAL
     ]
 
 
@@ -85,7 +91,7 @@ def _successor(ownership: Ownership, dead: str, heir: str | None) -> Ownership:
     if heir is not None:
         owners.add(heir)
     if len(owners) == 0:
-        return Ownership("communal")
+        return Ownership(COMMUNAL)
     if len(owners) == 1:
         return Ownership("personal", tuple(owners))
     return Ownership("shared", tuple(sorted(owners)))

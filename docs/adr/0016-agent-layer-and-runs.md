@@ -18,11 +18,12 @@ M1d closes milestone M1: villages that run on their own (REQ-AGT-008, REQ-SIM-01
    - A mind that raises `MindFailure` falls back to the scripted mind, and the controller counts the fallback (REQ-AGT-008 AC2). The M2 LLM mind plugs in here.
 2. **Due villagers and memory.**
    - The controller asks for a decision only for a *due* villager: one with no activity, no path and no idle time left. A need level at its `urgent_at` level makes a villager due even while it has an activity or a path, but never inside its idle window. `idle_ticks` is short, and the rule stops an urgent villager from re-sending a rejected untargeted intent every tick.
+   - A mind may return no decision (`None`). The controller then idles the villager for `idle_ticks`, as after a `Wait`.
    - The controller never sends an intent that repeats what the villager is already doing. Examples are a `MoveTo` to the end of its current path, or a `StartAction` for its current action and target. Such an intent would restart the work.
    - Per villager it remembers:
      - `target` and `job` of the last decision.
      - `idle_until`, set after a `Wait` or a rejection with no target.
-     - `avoid`, mapping a target to a tick. A rejected intent or failed move adds the decision's target here for `avoid_ticks`.
+     - `avoid`, mapping a target to a tick. A rejected intent, a failed move or work the engine interrupts adds the decision's target here for `avoid_ticks`. Every rule passes over an avoided target: nodes, stores, sites to supply or build, houses to move into, partners to court, a parent to follow and `place:<kind>` claims. A villager whose home is avoided sleeps where it stands and does not walk home for shelter.
    - This memory is part of every snapshot.
 3. **Scripted decisions are stateless rules over a read-only `View`.**
    - Each rule looks at the world and the controller memory and returns a decision or nothing. The first rule that fires wins.
@@ -31,12 +32,13 @@ M1d closes milestone M1: villages that run on their own (REQ-AGT-008, REQ-SIM-01
    - Needs are found by their `relief` kind. Thresholds are `act_at[relief]` and `urgent_at[relief]`.
    - The `View` keeps a grid index of nodes by kind, because nodes never move, and caches its per-tick queries. The world does not change while minds decide. Controller memory does: each decision's target and job are written through `View.remember`, which keeps the counts behind `workers`, `builders` and `placing` current.
    - One cache outlives the tick. The free site origins that `free_origin` finds are kept across ticks in the controller's `OriginCache`, keyed on everything `free_origin` reads: the tilemap and node-set objects, every building's (id, kind, origin), and the village centre. This is safe because, like the cost field (ADR-0014 §7), it relies on the tilemap being replaced rather than changed, on nodes never moving, and on a building's id, kind and origin never changing once placed. Any new building, or a new centre, changes the key and drops the cache.
+   - A placement is offered only where the placer can walk. The cache also holds the *regions* of the walkable field (walkable terrain less the tiles of buildings without an entrance, as the engine's cost field): 4-connected walkable tiles share a label. Walkability depends only on the tilemap and the buildings, so the regions are found once per key, by one flood fill, never per villager. A villager's reach is the regions of its tile and the tiles beside it, since a path may start on an impassable tile. `free_origin(kind, start)` returns the nearest clear origin to the centre whose region is in that reach, and the origins are kept per (kind, reach).
 4. **The village plan is derived, not stored.**
    - **Food demand** is the shortfall of the nutrition held in buildings' storage below `food_reserve_per_capita` × population, as a fraction. Each villager counts the food in the stores it can fetch from: complete buildings with storage that it may use and does not avoid. Food in villagers' inventories does not count, because children can only eat from hand or from a store.
    - **Material demand** is 1 for every item an unfinished site still needs.
    - **Choosing a job.** A villager takes the doable node action with the highest `demand / (1 + others on that output) × (1 + skill_weight × skill / max_skill)`. Ties go to the action id. The villager then goes to the nearest unavoided node with stock.
    - **Houses.** When the beds wanted outnumber free communal housing plus the housing of open house sites, one villager places a communal `house_building`. Beds wanted are the homeless villagers' beds plus one for each couple that does not share a complete home with a free bed, since conception needs one.
-   - **Storehouse.** When communal storage is below `storage_per_capita` × population, one villager places a communal `store_building`.
+   - **Storehouse.** When communal storage is below `storage_per_capita` × population, one villager places a communal `store_building`. Houses come first: no storehouse is placed while `housing_shortfall()` is above zero or a house site is unfinished.
    - At most one villager claims each placement, recorded as target `place:<kind>`.
    - Sites are supplied by whoever carries what they need. Up to `max_builders` villagers build each site once its materials are in.
    - **Couples.** Unpartnered adults of a compatible sex (exactly one of the pair has `bearing_sex`) propose to the nearest free candidate and accept proposals made to them.
@@ -65,6 +67,8 @@ M1d closes milestone M1: villages that run on their own (REQ-AGT-008, REQ-SIM-01
 Amended on 2026-11-24, during the M1d performance work (Task 11, REQ-NFR-003). §3 now states which `View` caches last for a tick and which one, the `OriginCache`, outlives it, and why that is safe.
 
 Amended on 2026-11-24, during the M1d baseline-village tuning (Task 10). Food demand counts stored food only, houses are wanted for couples without a free bed (and such a couple moves into one together), and a hungry child forages before it sleeps. Without these, the baseline village never had room for a child, and its children starved in winter.
+
+Amended on 2026-11-25, in the M1d final fix wave. §2 says that a `None` decision idles the villager for `idle_ticks`, and that every rule passes over avoided targets, sites and homes included. §3 adds the walkable regions to the `OriginCache`, so a site is placed only where its placer can walk. §4 adds the houses-first rule for storehouses. Before this, villagers could retry an unreachable site or home every tick, and a village whose centre was cut off by water never built.
 
 ## Consequences
 

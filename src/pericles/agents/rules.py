@@ -6,7 +6,7 @@ import math
 from collections.abc import Callable, Iterable, Mapping, Sequence
 
 from pericles.agents.view import CONSTRUCT, PLACE, Decision, View
-from pericles.core.buildings import footprint, remaining_cost
+from pericles.core.buildings import COMMUNAL, footprint, remaining_cost
 from pericles.core.content.schema import ActionDef
 from pericles.core.geometry import Coord
 from pericles.core.intents import (
@@ -269,9 +269,6 @@ def deposit(view: View, villager: Villager) -> Decision | None:
                 Deposit(villager.id, building.id, item, min(qty, room)), target=building.id
             )
     return None
-
-
-COMMUNAL = "communal"
 
 
 def wanted_building(view: View, villager: Villager) -> str | None:

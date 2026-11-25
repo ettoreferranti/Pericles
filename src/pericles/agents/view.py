@@ -645,7 +645,7 @@ class View:
         return sum(
             getattr(registry.buildings[b.kind], attribute)
             for b in self.state.buildings.values()
-            if b.complete == complete and b.ownership.kind == "communal"
+            if b.complete == complete and b.ownership.kind == COMMUNAL
         )
 
     def crowded_couples(self) -> int:
@@ -683,7 +683,7 @@ class View:
         free = sum(
             registry.buildings[b.kind].housing - self.occupants(b.id)
             for b in self.state.buildings.values()
-            if b.complete and b.ownership.kind == "communal" and registry.buildings[b.kind].housing
+            if b.complete and b.ownership.kind == COMMUNAL and registry.buildings[b.kind].housing
         )
         building = self._communal("housing", complete=False)
         return homeless - free - building
@@ -711,7 +711,7 @@ class View:
                 b
                 for b in self.state.buildings.values()
                 if b.complete
-                and b.ownership.kind == "communal"
+                and b.ownership.kind == COMMUNAL
                 and registry.buildings[b.kind].storage
             ),
             key=lambda b: b.id,
