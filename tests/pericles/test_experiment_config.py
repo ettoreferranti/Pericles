@@ -311,17 +311,22 @@ def test_the_resolved_config_is_portable(tmp_path: Path) -> None:
 @pytest.mark.req("REQ-LLM-006")
 def test_the_llm_section_assigns_models_and_is_resolved(tmp_path: Path) -> None:
     """AC1: pinned villagers keep their model; the split is recorded in the resolved config."""
-    data = changed("llm.assign", {"m": 1.0})
-    data["population"].append({"id": "c", "name": "C", "sex": "male", "age_days": 300})
+    data = changed("llm.assign", {"m": 1.0, "n": 1.0})
+    data["llm"]["models"]["n"] = {"backend": "test", "name": "fake-n"}
+    for vid in "cde":
+        data["population"].append({"id": vid, "name": vid, "sex": "male", "age_days": 300})
     experiment = experiment_from_mapping(data, tmp_path)
     models = {spec.id: spec.model for spec in experiment.population}
-    assert models == {"a": "m", "b": "m", "c": "m"}
+    assert models["b"] == "m" and models["a"] in {"m", "n"}
+    assert sorted(str(models[v]) for v in "acde") == ["m", "m", "n", "n"]
     assert experiment.llm.models["m"].name == "fake-m"
     resolved = experiment.resolved
-    assert [p.get("model") for p in resolved["population"]] == ["m", "m", "m"]
+    assert {p["id"]: p.get("model") for p in resolved["population"]} == models
     assert resolved["llm"]["models"]["m"]["temperature"] == 0.7
     again = experiment_from_mapping(resolved, tmp_path)
     assert again.population == experiment.population and again.llm == experiment.llm
+    other_seed = experiment_from_mapping({**resolved, "seed": resolved["seed"] + 1}, tmp_path)
+    assert other_seed.population == experiment.population
 
 
 @pytest.mark.req("REQ-LLM-006")
@@ -333,6 +338,9 @@ def test_paths_in_the_llm_section_resolve_against_the_experiment(tmp_path: Path)
     experiment = experiment_from_mapping(data, tmp_path)
     assert experiment.llm.backends["test"].replies == str((tmp_path / "replies.yaml").resolve())
     assert experiment.llm.cache_from == str((tmp_path / "old-run").resolve())
+    elsewhere = tmp_path / "elsewhere"
+    again = experiment_from_mapping(experiment.resolved, elsewhere)
+    assert again.llm == experiment.llm
 
 
 @pytest.mark.req("REQ-LLM-006")
