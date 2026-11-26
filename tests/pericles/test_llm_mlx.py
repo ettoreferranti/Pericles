@@ -15,6 +15,7 @@ class FakeRuntime:
         self.loaded: list[str] = []
         self.prompts: list[list[dict[str, str]]] = []
         self.generated: list[tuple[str, Sampling, int]] = []
+        self.handles: list[object] = []
         self.fail_load = fail_load
         self.fail_generate = fail_generate
 
@@ -25,15 +26,18 @@ class FakeRuntime:
         return {"name": name}
 
     def chat_prompt(self, handle: object, messages: list[dict[str, str]]) -> str:
+        self.handles.append(handle)
         self.prompts.append(messages)
         return "|".join(m["content"] for m in messages)
 
     def count(self, handle: object, text: str) -> int:
+        self.handles.append(handle)
         return len(text)
 
     def generate(self, handle: object, prompt: str, sampling: Sampling, seed: int) -> str:
         if self.fail_generate:
             raise RuntimeError("metal out of memory")
+        self.handles.append(handle)
         self.generated.append((prompt, sampling, seed))
         return '{"ok": true}'
 
@@ -79,6 +83,17 @@ def test_the_schema_goes_into_the_prompt() -> None:
     assert sent[0] == {"role": "user", "content": "hi"}
     assert sent[1] == {"role": "system", "content": schema_instruction(schema)}
     assert json.dumps(schema, sort_keys=True) in schema_instruction(schema)
+    assert schema_instruction(schema).startswith(
+        "Respond with only a JSON object that matches this JSON schema: "
+    )
+
+
+@pytest.mark.req("REQ-LLM-003")
+def test_every_runtime_call_gets_the_loaded_model_handle() -> None:
+    """AC1: prompt building, generation and both token counts use the loaded model."""
+    runtime = FakeRuntime()
+    MLXBackend(runtime=runtime).complete(call())
+    assert runtime.handles == [{"name": "mlx-community/tiny"}] * 4
 
 
 @pytest.mark.req("REQ-LLM-003")
@@ -104,5 +119,5 @@ def test_a_missing_mlx_install_says_how_to_install_it(monkeypatch: pytest.Monkey
         raise ImportError("No module named 'mlx_lm'")
 
     monkeypatch.setattr(module, "default_runtime", missing)
-    with pytest.raises(LLMSetupError, match="uv sync --extra mlx"):
+    with pytest.raises(LLMSetupError, match=r"uv sync --extra mlx.* on Apple Silicon"):
         MLXBackend().check(["mlx-community/tiny"])
