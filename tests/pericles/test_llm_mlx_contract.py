@@ -12,7 +12,7 @@ from pericles.llm.mlx import MLXBackend  # noqa: E402
 from pericles.llm.types import BackendCall, Message, Sampling  # noqa: E402
 from pericles.llm.validate import schema_of, validate  # noqa: E402
 
-MODEL = os.environ.get("PERICLES_MLX_MODEL", "mlx-community/Qwen2.5-0.5B-Instruct-4bit")
+MODEL = os.environ.get("PERICLES_MLX_MODEL", "mlx-community/Qwen2.5-1.5B-Instruct-4bit")
 
 
 class Answer(BaseModel):
