@@ -68,6 +68,8 @@ class LLMConfig:
             errors.append(f"cache must be one of {CACHE_MODES}")
         if self.cache == "replay" and self.cache_from is None:
             errors.append("cache 'replay' needs cache_from")
+        if self.cache != "replay" and self.cache_from is not None:
+            errors.append("cache_from is only used with cache 'replay'")
         if not (math.isfinite(self.backoff_base_s) and self.backoff_base_s > 0):
             errors.append("backoff_base_s must be positive")
         if not (math.isfinite(self.backoff_factor) and self.backoff_factor >= 1):

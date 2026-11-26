@@ -14,6 +14,7 @@ from pericles.llm.gateway import (
     BackendUnavailable,
     FailurePolicy,
     Gateway,
+    _Health,
     check_models,
     prompt_hash,
 )
@@ -162,7 +163,9 @@ def test_live_mode_returns_a_backend_error_at_once(tmp_path: Path) -> None:
     g = gateway({"f": backend}, tmp_path, policy=LIVE, slept=slept)
     failed, fine = g.complete_all([request("ada"), request("bram")])
     assert failed.backend_error == "fake backend: down" and failed.value is None
-    assert not failed.valid
+    assert not failed.valid and failed.request == request("ada")
+    assert (failed.text, failed.tokens_in, failed.tokens_out) == ("", 0, 0)
+    assert (failed.latency_s, failed.cached) == (0.0, False)
     assert fine.value == Choice(pick=5)
     assert slept == []
     assert g.calls is not None
@@ -181,10 +184,10 @@ def test_wait_mode_give_up_in_a_mixed_batch_keeps_the_good_results(tmp_path: Pat
     )
     g = gateway({"f": backend}, tmp_path)
     with pytest.raises(BackendUnavailable):
-        g.complete_all([request("ada"), request("bram")])
+        g.complete_all([request("bram"), request("ada")])
     assert g.calls is not None
     rows = list(g.calls.records())
-    assert [(r.villager, r.valid) for r in rows] == [("ada", False)] * 4 + [("bram", True)]
+    assert [(r.villager, r.valid) for r in rows] == [("bram", True)] + [("ada", False)] * 4
     g.close()
     silent = FakeBackend()
     replayer = gateway({"f": silent}, tmp_path, mode="replay")
@@ -192,6 +195,124 @@ def test_wait_mode_give_up_in_a_mixed_batch_keeps_the_good_results(tmp_path: Pat
     assert result.cached and result.value == Choice(pick=5)
     assert silent.calls == []
     replayer.close()
+
+
+@pytest.mark.req("REQ-LLM-009")
+def test_wait_mode_counts_failures_per_backend_not_per_request(tmp_path: Path) -> None:
+    """AC1: after max_backend_failures failures in a row on a backend the run stops."""
+    backend = FakeBackend([FakeRule((FakeError("down"),))])
+    slept: list[float] = []
+    g = gateway({"f": backend}, tmp_path, slept=slept)
+    with pytest.raises(
+        BackendUnavailable, match="fake backend: 4 failures in a row; last: fake backend: down"
+    ):
+        g.complete_all([request(v) for v in ("ada", "bram", "cleo", "dov")])
+    assert len(backend.calls) == 4
+    assert slept == [2.0, 6.0, 10.0]
+    assert g.calls is not None
+    assert [r.villager for r in g.calls.records()] == ["ada"] * 4
+    with pytest.raises(BackendUnavailable, match="4 failures in a row"):
+        g.complete(request("eve"))
+    assert len(backend.calls) == 8
+    g.close()
+
+
+@pytest.mark.req("REQ-LLM-009")
+def test_wait_mode_give_up_spares_other_backends(tmp_path: Path) -> None:
+    """AC1: a dead backend stops the run but a healthy one's replies are cached and logged."""
+    down = FakeBackend([FakeRule((FakeError("down"),))])
+    healthy = FakeBackend([FakeRule(('{"pick": 7}',))])
+    models = {"m": ModelSpec("f", "fake-m", SAMPLING), "n": ModelSpec("g", "fake-n", SAMPLING)}
+    g = gateway({"f": down, "g": healthy}, tmp_path, models=models)
+    with pytest.raises(BackendUnavailable, match="4 failures in a row"):
+        g.complete_all([request("ada", model="m"), request("bram", model="n")])
+    assert (len(down.calls), len(healthy.calls)) == (4, 1)
+    assert g.calls is not None
+    rows = list(g.calls.records())
+    assert [(r.villager, r.valid) for r in rows] == [("ada", False)] * 4 + [("bram", True)]
+    g.close()
+    replayer = gateway(
+        {"f": FakeBackend(), "g": FakeBackend()}, tmp_path, mode="replay", models=models
+    )
+    assert replayer.complete(request("bram", model="n")).value == Choice(pick=7)
+    replayer.close()
+
+
+@pytest.mark.req("REQ-LLM-009")
+def test_a_success_resets_the_backend_failure_count(tmp_path: Path) -> None:
+    """AC1: only failures in a row count; a success in between starts the count again."""
+    backend = FakeBackend(
+        [
+            FakeRule((FakeError("busy"), '{"pick": 1}'), villager="ada"),
+            FakeRule((FakeError("busy"),) * 3 + ('{"pick": 2}',), villager="bram"),
+        ]
+    )
+    slept: list[float] = []
+    g = gateway({"f": backend}, tmp_path, slept=slept)
+    ada, bram = g.complete_all([request("ada"), request("bram")])
+    assert (ada.value, bram.value) == (Choice(pick=1), Choice(pick=2))
+    assert (ada.latency_s, bram.latency_s) == (1.0, 1.0)
+    assert len(backend.calls) == 6
+    assert slept == [2.0, 2.0, 6.0, 10.0]
+    g.close()
+
+
+@pytest.mark.req("REQ-LLM-009")
+def test_concurrent_requests_share_the_backend_failure_count(tmp_path: Path) -> None:
+    """AC1: worker threads on one backend stop once it has failed max times in a row."""
+    backend = FakeBackend([FakeRule((FakeError("down"),))], concurrency=3)
+    g = gateway({"f": backend}, tmp_path)
+    with pytest.raises(BackendUnavailable, match="4 failures in a row"):
+        g.complete_all([request(v) for v in "abcdefgh"])
+    assert 4 <= len(backend.calls) <= 4 + 2
+    g.close()
+
+
+@pytest.mark.req("REQ-LLM-009")
+def test_a_late_success_does_not_revive_a_given_up_backend() -> None:
+    """AC1: once a backend has failed max times in a row, an in-flight success keeps it down."""
+    health = _Health(2)
+    assert not health.failed("a") and not health.given_up()
+    assert health.failed("b") and health.given_up()
+    health.succeeded()
+    assert health.given_up() and health.last == "b"
+    fresh = _Health(2)
+    fresh.failed("a")
+    fresh.succeeded()
+    assert not fresh.failed("c")
+
+
+@pytest.mark.req("REQ-LLM-005")
+def test_identical_requests_in_a_batch_call_the_backend_once(tmp_path: Path) -> None:
+    """AC2: duplicates share one reply, so a replay serves what the run saw."""
+    backend = FakeBackend([FakeRule(('{"pick": 1}', '{"pick": 2}'))])
+    g = gateway({"f": backend}, tmp_path)
+    first, second = g.complete_all([request("ada"), request("ada")])
+    assert len(backend.calls) == 1
+    assert first.value == second.value == Choice(pick=1)
+    assert (first.cached, second.cached) == (False, True)
+    assert (first.latency_s, second.latency_s) == (1.0, 0.0)
+    assert g.calls is not None
+    rows = list(g.calls.records())
+    assert [(r.cached, r.raw) for r in rows] == [(False, '{"pick": 1}'), (True, '{"pick": 1}')]
+    g.close()
+    replayer = gateway({"f": FakeBackend()}, tmp_path, mode="replay")
+    again = replayer.complete_all([request("ada"), request("ada")])
+    assert [r.value for r in again] == [Choice(pick=1)] * 2
+    replayer.close()
+
+
+@pytest.mark.req("REQ-LLM-009")
+def test_live_mode_duplicates_share_a_backend_error(tmp_path: Path) -> None:
+    """AC2 (gateway part): a duplicate of a failed request carries the same error, unlogged."""
+    backend = FakeBackend([FakeRule((FakeError("down"),))])
+    g = gateway({"f": backend}, tmp_path, policy=LIVE)
+    first, second = g.complete_all([request("ada"), request("ada")])
+    assert first.backend_error == second.backend_error == "fake backend: down"
+    assert len(backend.calls) == 1
+    assert g.calls is not None
+    assert len(list(g.calls.records())) == 1
+    g.close()
 
 
 def test_failure_policy_delay_is_capped() -> None:

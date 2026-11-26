@@ -22,7 +22,7 @@ uv run pytest -m perf                                      # perf test (target m
 
 ### Language models
 
-Villagers with a `model:` call a model through the gateway (ADR-0017). Configure backends and models in the experiment's `llm:` section:
+From M2b, villagers with a `model:` call a model through the gateway (ADR-0017). In M2a the `llm:` section is configured and checked when a run starts (it fails fast if a model is missing), and runs open the response cache and call log, but villagers still use the scripted mind. Configure backends and models in the experiment's `llm:` section:
 
 ```yaml
 llm:

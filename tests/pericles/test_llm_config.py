@@ -37,6 +37,8 @@ def test_a_complete_config_is_valid_and_frozen() -> None:
         ({"mode": "fast"}, "mode must be one of"),
         ({"cache": "always"}, "cache must be one of"),
         ({"cache": "replay"}, "cache 'replay' needs cache_from"),
+        ({"cache_from": "runs/a"}, "cache_from is only used with cache 'replay'"),
+        ({"cache": "off", "cache_from": "runs/a"}, "cache_from is only used with cache 'replay'"),
         ({"backoff_base_s": 0.0}, "backoff_base_s must be positive"),
         ({"backoff_base_s": math.nan}, "backoff_base_s must be positive"),
         ({"backoff_factor": math.nan}, "backoff_factor must be at least 1"),
@@ -142,3 +144,12 @@ def test_model_keys_containing_must_keep_the_message_intact() -> None:
     with pytest.raises(ValueError) as caught:
         config(models={"x must": bad}, assign={"x must": 1.0})
     assert str(caught.value) == "models.x must.temperature: must be finite and non-negative"
+
+
+@pytest.mark.req("REQ-LLM-006")
+def test_cache_from_is_rejected_unless_replaying() -> None:
+    """AC1: a cache_from that would be ignored is an error, not a silent no-op."""
+    with pytest.raises(ValueError) as caught:
+        config(cache="record", cache_from="runs/a")
+    assert str(caught.value) == "cache_from is only used with cache 'replay'"
+    assert config(cache="replay", cache_from="runs/a").cache_from == "runs/a"

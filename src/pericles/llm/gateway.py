@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import threading
 import time
 from collections.abc import Callable, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
@@ -33,6 +34,32 @@ class FailurePolicy:
 
 class BackendUnavailable(Exception):
     """Wait mode: a backend failed `max_backend_failures` times in a row. Stop and resume."""
+
+
+class _Health:
+    """One backend's failures in a row during one `complete_all`, shared by its workers."""
+
+    def __init__(self, limit: int) -> None:
+        self._limit = limit
+        self._lock = threading.Lock()
+        self.failures = 0
+        self.last = ""
+
+    def given_up(self) -> bool:
+        with self._lock:
+            return self.failures >= self._limit
+
+    def failed(self, error: str) -> bool:
+        """Count a failure; True once the backend has failed `limit` times in a row."""
+        with self._lock:
+            self.failures += 1
+            self.last = error
+            return self.failures >= self._limit
+
+    def succeeded(self) -> None:
+        with self._lock:
+            if self.failures < self._limit:
+                self.failures = 0
 
 
 @dataclass(frozen=True)
@@ -104,41 +131,55 @@ class Gateway:
                 ) from None
             if hit is not None:
                 hits[i] = hit
-        groups: dict[tuple[str, str], list[int]] = {}
-        for i, spec in enumerate(specs):
+        leaders: dict[int, int] = {}
+        first: dict[str, int] = {}
+        for i in range(len(requests)):
             if i not in hits:
-                groups.setdefault((spec.backend, spec.name), []).append(i)
+                leaders[i] = first.setdefault(keys[i], i)
+        groups: dict[tuple[str, str], list[int]] = {}
+        for i, leader in leaders.items():
+            if i == leader:
+                groups.setdefault((specs[i].backend, specs[i].name), []).append(i)
+        health = {key: _Health(self.policy.max_backend_failures) for key in self.backends}
         outcomes: dict[int, _Outcome] = {}
         for backend_key, name in sorted(groups):
-            backend = self.backends[backend_key]
+            backend, state = self.backends[backend_key], health[backend_key]
             indices = groups[(backend_key, name)]
             with ThreadPoolExecutor(max_workers=backend.concurrency) as pool:
-                done = list(pool.map(lambda i, b=backend: self._attempt(b, calls[i]), indices))
+                done = list(
+                    pool.map(lambda i, b=backend, h=state: self._attempt(b, calls[i], h), indices)
+                )
             outcomes.update(zip(indices, done, strict=True))
         results: list[Result] = []
         unavailable: str | None = None
         for i, request in enumerate(requests):
             spec, call = specs[i], calls[i]
-            backend = self.backends[spec.backend]
             if i in hits:
                 result = self._result(request, hits[i], 0.0, cached=True)
                 self._log(request, spec, call, result)
                 results.append(result)
                 continue
-            outcome = outcomes[i]
-            for error in outcome.errors:
-                self._log_failure(request, spec, call, error)
+            leader = leaders[i]
+            outcome = outcomes[leader]
+            if i == leader:
+                for error in outcome.errors:
+                    self._log_failure(request, spec, call, error)
             if outcome.completion is None:
-                last = outcome.errors[-1]
+                state = health[spec.backend]
+                last = outcome.errors[-1] if outcome.errors else state.last
                 if self.policy.mode == "wait" and unavailable is None:
                     unavailable = (
-                        f"{backend.describe()}: {len(outcome.errors)} failures in a row; "
-                        f"last: {last}"
+                        f"{self.backends[spec.backend].describe()}: "
+                        f"{self.policy.max_backend_failures} failures in a row; "
+                        f"last: {state.last}"
                     )
                 results.append(Result(request, "", None, None, last, 0, 0, 0.0, False))
                 continue
-            self.cache.put(keys[i], outcome.completion)
-            result = self._result(request, outcome.completion, outcome.latency_s, cached=False)
+            if i == leader:
+                self.cache.put(keys[i], outcome.completion)
+                result = self._result(request, outcome.completion, outcome.latency_s, cached=False)
+            else:
+                result = self._result(request, outcome.completion, 0.0, cached=True)
             self._log(request, spec, call, result)
             results.append(result)
         if unavailable is not None:
@@ -168,18 +209,20 @@ class Gateway:
             request.villager,
         )
 
-    def _attempt(self, backend: Backend, call: BackendCall) -> _Outcome:
-        tries = 1 if self.policy.mode == "live" else self.policy.max_backend_failures
+    def _attempt(self, backend: Backend, call: BackendCall, health: _Health) -> _Outcome:
+        """Live: one try. Wait: retry with backoff until a success or the backend gives up."""
         errors: list[str] = []
-        for failure in range(1, tries + 1):
+        while not health.given_up():
             start = self._clock()
             try:
                 completion = backend.complete(call)
             except BackendError as error:
                 errors.append(str(error))
-                if failure < tries:
-                    self._sleep(self.policy.delay(failure))
+                if self.policy.mode == "live" or health.failed(str(error)):
+                    break
+                self._sleep(self.policy.delay(len(errors)))
                 continue
+            health.succeeded()
             return _Outcome(completion, self._clock() - start, tuple(errors))
         return _Outcome(None, 0.0, tuple(errors))
 
