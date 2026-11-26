@@ -1,5 +1,6 @@
 import copy
 import json
+import socket
 from pathlib import Path
 from typing import Any
 
@@ -133,20 +134,41 @@ def test_a_failed_resume_closes_the_run_directory(
     assert closed == [out]
 
 
+def unused_port() -> int:
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        return int(sock.getsockname()[1])
+
+
+@pytest.mark.req("REQ-LLM-005")
+def test_a_bad_replay_source_fails_fast_and_leaves_no_run_directory(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """AC2: cache_from that is not a response cache exits 2 before the directory exists."""
+    data = copy.deepcopy(TINY)
+    data["llm"] = {"cache": "replay", "cache_from": "exp.yaml"}
+    path = write(tmp_path, data)
+    assert main(["run", str(path), "--out", str(tmp_path / "out")]) == 2
+    err = capsys.readouterr().err
+    assert "llm.cache_from" in err and "is not a response cache" in err
+    assert not (tmp_path / "out").exists()
+
+
 @pytest.mark.req("REQ-LLM-002")
 def test_a_missing_model_fails_fast_and_leaves_no_run_directory(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """AC1: the model check runs before the run directory is created."""
+    port = unused_port()
     data = copy.deepcopy(TINY)
     data["llm"] = {
-        "backends": {"local": {"kind": "ollama", "url": "http://127.0.0.1:9"}},
+        "backends": {"local": {"kind": "ollama", "url": f"http://127.0.0.1:{port}"}},
         "models": {"q": {"backend": "local", "name": "qwen3"}},
         "assign": {"q": 1.0},
     }
     path = write(tmp_path, data)
     assert main(["run", str(path), "--out", str(tmp_path / "out"), "--days", "1"]) == 2
-    assert "cannot reach ollama at http://127.0.0.1:9" in capsys.readouterr().err
+    assert f"cannot reach ollama at http://127.0.0.1:{port}" in capsys.readouterr().err
     assert not (tmp_path / "out").exists()
 
 

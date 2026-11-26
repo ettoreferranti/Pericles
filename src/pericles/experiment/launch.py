@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import shutil
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -15,6 +16,7 @@ from pericles.experiment.llm import build_backends, open_gateway, replay_source,
 from pericles.experiment.rundir import RunDirectory
 from pericles.experiment.runner import resume, run
 from pericles.llm.backend import Backend
+from pericles.llm.cache import CacheMiss
 from pericles.llm.gateway import BackendUnavailable, Gateway, check_models
 
 
@@ -33,9 +35,13 @@ class Session:
 
 
 def _backends(experiment: Experiment) -> dict[str, Backend]:
-    """Build and check every backend before anything is written (ADR-0017 §11)."""
+    """Build every backend, and check its models unless the run replays a cache.
+
+    A replay needs no model installed (ADR-0017 §5); anything else fails here, before
+    anything is written (§11)."""
     backends = build_backends(experiment.llm)
-    check_models(experiment.llm.models, backends)
+    if experiment.llm.cache != "replay":
+        check_models(experiment.llm.models, backends)
     return backends
 
 
@@ -48,11 +54,29 @@ def start(experiment: Experiment, out: Path) -> Session:
     if experiment.llm.cache == "replay":  # a resumed replay run already holds its copy
         assert experiment.llm.cache_from is not None
         replay_source(Path(experiment.llm.cache_from))
+    existed = out.exists()
     run_dir = RunDirectory.create(
         out, experiment.resolved, seed=experiment.seed, extra=run_meta(experiment.llm)
     )
-    gateway = open_gateway(experiment.llm, backends, run_dir)
+    try:
+        gateway = open_gateway(experiment.llm, backends, run_dir)
+    except BaseException:
+        run_dir.close()
+        _remove_created(out, existed)
+        raise
     return Session(run_dir, experiment, engine, state, controller, gateway)
+
+
+def _remove_created(out: Path, existed: bool) -> None:
+    """Undo RunDirectory.create: the directory itself goes only if that call made it."""
+    if not existed:
+        shutil.rmtree(out)
+        return
+    for child in out.iterdir():
+        if child.is_dir():
+            shutil.rmtree(child)
+        else:
+            child.unlink()
 
 
 def reopen(out: Path) -> Session:
@@ -89,7 +113,7 @@ def advance(session: Session, days: int | None = None) -> WorldState:
             max(session.state.tick, total * per_day),
             session.experiment.run.snapshot_every_days * per_day,
         )
-    except BackendUnavailable:
+    except (BackendUnavailable, CacheMiss):
         _write_metrics(session)
         raise
     _write_metrics(session)

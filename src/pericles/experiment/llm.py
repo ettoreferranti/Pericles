@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import shutil
+import sqlite3
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
@@ -52,8 +53,25 @@ def replay_source(path: Path) -> Path:
     """The responses.sqlite of a run directory, its llm_cache directory, or the file itself."""
     for candidate in (path, path / CACHE_FILE, path / CACHE_DIR / CACHE_FILE):
         if candidate.is_file():
+            _check_cache(candidate)
             return candidate
     raise LLMSetupError(f"llm.cache_from: no {CACHE_FILE} under {path}")
+
+
+def _check_cache(path: Path) -> None:
+    """Fail before a run directory exists when `path` is not a response cache."""
+    try:
+        conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+        try:
+            found = conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'responses'"
+            ).fetchone()
+        finally:
+            conn.close()
+    except sqlite3.Error as error:
+        raise LLMSetupError(f"llm.cache_from: {path} is not a response cache ({error})") from None
+    if found is None:
+        raise LLMSetupError(f"llm.cache_from: {path} is not a response cache (no responses table)")
 
 
 def run_meta(config: LLMConfig) -> dict[str, Any]:

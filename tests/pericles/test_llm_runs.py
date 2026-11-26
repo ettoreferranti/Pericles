@@ -1,3 +1,5 @@
+import sqlite3
+from collections import Counter
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
@@ -17,6 +19,7 @@ from pericles.experiment.llm import CACHE_FILE, CALLS_FILE, open_gateway, replay
 from pericles.experiment.rundir import RunDirectory
 from pericles.experiment.runner import resume, run
 from pericles.llm.backend import Backend, LLMSetupError
+from pericles.llm.cache import ResponseCache
 from pericles.llm.config import BackendSpec, LLMConfig
 from pericles.llm.fake import FakeBackend, FakeError, FakeRule
 from pericles.llm.gateway import BackendUnavailable, Gateway
@@ -138,11 +141,28 @@ def test_replay_source_accepts_a_run_its_cache_dir_or_the_file(tmp_path: Path) -
     """AC2: cache_from may point at the run, its llm_cache, or responses.sqlite."""
     cache = tmp_path / "run" / "llm_cache"
     cache.mkdir(parents=True)
-    (cache / CACHE_FILE).write_bytes(b"")
+    ResponseCache(cache / CACHE_FILE, "record").close()
     for given in (tmp_path / "run", cache, cache / CACHE_FILE):
         assert replay_source(given) == cache / CACHE_FILE
     with pytest.raises(LLMSetupError, match=r"llm\.cache_from: no responses\.sqlite"):
         replay_source(tmp_path / "nowhere")
+
+
+@pytest.mark.req("REQ-LLM-005")
+def test_replay_source_rejects_files_that_are_not_response_caches(tmp_path: Path) -> None:
+    """AC2: a bad cache_from is reported by name before any run directory exists."""
+    text = tmp_path / "exp.yaml"
+    text.write_text("seed: 1\n", encoding="utf-8")
+    with pytest.raises(
+        LLMSetupError, match=r"llm\.cache_from: .*exp\.yaml is not a response cache"
+    ):
+        replay_source(text)
+    other = tmp_path / "other.sqlite"
+    sqlite3.connect(other).close()
+    with pytest.raises(
+        LLMSetupError, match=r"llm\.cache_from: .*other\.sqlite is not a response cache"
+    ):
+        replay_source(other)
 
 
 @pytest.mark.req("REQ-LLM-009")
@@ -160,7 +180,11 @@ def test_a_backend_that_stays_down_stops_the_run_cleanly_and_it_resumes(
     gateway = open_gateway(config("record"), {"test": flaky}, run_dir)
     with pytest.raises(BackendUnavailable, match="2 failures in a row"):
         run(run_dir, engine, state, ProbeAgents(gateway, walkable), 30, 10)
+    assert gateway.calls is not None
+    stopped_log = list(gateway.calls.records())
     gateway.close()
+    # the stop left failure rows behind: the resume must not keep them
+    assert any((r.error or "").startswith("backend:") for r in stopped_log)
     assert run_dir.event_log.last_tick() == 6  # ticks 0-6 are whole; tick 7 never stepped
     assert gateway.calls is not None
     restored, _ = resume(run_dir)
@@ -172,7 +196,10 @@ def test_a_backend_that_stays_down_stops_the_run_cleanly_and_it_resumes(
     gateway.calls.truncate_after(restored.tick - 1)
     run(run_dir, engine, restored, ProbeAgents(gateway, walkable), 30, 10)
     assert run_dir.event_log.last_tick() == 29
-    assert all(r.tick >= resumed_at for r in gateway.calls.records())
+    rows = list(gateway.calls.records())
+    assert all(r.tick >= resumed_at for r in rows)
+    assert not any((r.error or "").startswith("backend:") for r in rows)
+    assert Counter(r.tick for r in rows) == {t: 3 for t in (0, 7, 14, 21, 28)}
     assert (tmp_path / "run" / CALLS_FILE).exists()
     gateway.close()
     run_dir.close()
