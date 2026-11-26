@@ -67,6 +67,24 @@ agents:
   idle_ticks: 15
   child_follow_radius: 4
   couples: true
+  # Plan minds (ADR-0018)
+  perception_radius: 12
+  replan_hours: 6.0
+  fallback_hours: 1.0
+  max_retries: 2
+  max_plan_steps: 6
+  prompt_budget_tokens: 2000
+  chars_per_token: 4.0
+  triggers: [idle, step_completed, step_failed, need, periodic]
+  plan_template: plan.v1
+  steering_phrases:
+    - you must obey
+    - you must follow the law
+    - obey the law
+    - you may break
+    - break the law
+    - rules are meant to be broken
+  drawn_traits: 0
 
 # LLM gateway (ADR-0017 §9). An experiment adds backends, models and assign.
 llm:

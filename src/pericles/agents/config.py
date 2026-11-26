@@ -7,6 +7,21 @@ from dataclasses import dataclass, field
 
 RELIEFS = ("eat", "sleep", "shelter")
 MAX_LEVEL = 100.0
+TRIGGERS = ("idle", "step_completed", "step_failed", "need", "periodic")  # ADR-0018 §2
+STEERING = (
+    "you must obey",
+    "you must follow the law",
+    "obey the law",
+    "you may break",
+    "break the law",
+    "rules are meant to be broken",
+)
+MINUTES_PER_HOUR = 60  # a unit, not a parameter
+
+
+def ticks_for_hours(tick_minutes: int, hours: float) -> int:
+    """Whole ticks in `hours`, rounded, and at least one."""
+    return max(1, round(hours * MINUTES_PER_HOUR / tick_minutes))
 
 
 def _act_at() -> dict[str, float]:
@@ -43,6 +58,18 @@ class AgentConfig:
     # Children and couples
     child_follow_radius: int = 4
     couples: bool = True
+    # Plan minds (ADR-0018)
+    perception_radius: int = 12
+    replan_hours: float = 6.0
+    fallback_hours: float = 1.0
+    max_retries: int = 2
+    max_plan_steps: int = 6
+    prompt_budget_tokens: int = 2000
+    chars_per_token: float = 4.0
+    triggers: tuple[str, ...] = TRIGGERS
+    plan_template: str = "plan.v1"
+    steering_phrases: tuple[str, ...] = STEERING
+    drawn_traits: int = 0
 
     def __post_init__(self) -> None:
         problems = _problems(self)
@@ -62,6 +89,9 @@ def _problems(c: AgentConfig) -> list[str]:
         c.food_reserve_per_capita,
         c.storage_per_capita,
         c.skill_weight,
+        c.replan_hours,
+        c.fallback_hours,
+        c.chars_per_token,
     ]
     if not all(math.isfinite(v) for v in reals):
         return ["numeric parameters must be finite"]
@@ -75,7 +105,15 @@ def _problems(c: AgentConfig) -> list[str]:
         c.node_search_radius,
         c.child_follow_radius,
     )
-    positive = (c.index_cell, c.avoid_ticks, c.idle_ticks, c.max_builders)
+    positive = (
+        c.index_cell,
+        c.avoid_ticks,
+        c.idle_ticks,
+        c.max_builders,
+        c.perception_radius,
+        c.max_plan_steps,
+        c.prompt_budget_tokens,
+    )
     checks = [
         (all(0 < v <= MAX_LEVEL for v in levels), "levels must be in (0, 100]"),
         (all(c.act_at[r] <= c.urgent_at[r] for r in RELIEFS), "need act_at <= urgent_at"),
@@ -84,5 +122,23 @@ def _problems(c: AgentConfig) -> list[str]:
         (all(v >= 0 for v in non_negative), "amounts, weights and radii must be non-negative"),
         (all(v > 0 for v in positive), "cells, tick counts and builder limits must be positive"),
         (bool(c.house_building and c.store_building), "building ids must be non-empty"),
+        (
+            c.replan_hours > 0 and c.fallback_hours > 0 and c.chars_per_token > 0,
+            "hours and chars_per_token must be positive",
+        ),
+        (
+            c.max_retries >= 0 and c.drawn_traits >= 0,
+            "max_retries and drawn_traits must be non-negative",
+        ),
+        (
+            len(set(c.triggers)) == len(c.triggers)
+            and set(c.triggers) <= set(TRIGGERS)
+            and "idle" in c.triggers,
+            f"triggers must be distinct names from {TRIGGERS} and include idle",
+        ),
+        (
+            bool(c.plan_template) and all(c.steering_phrases),
+            "plan_template and steering phrases must be non-empty",
+        ),
     ]
     return [message for ok, message in checks if not ok]
