@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from typing import Any, Protocol
 
 from pericles.core.engine import Engine
@@ -19,6 +19,8 @@ class Agents(Protocol):
 
     def observe(self, state: WorldState, events: Sequence[Event]) -> None: ...
 
+    def events(self) -> Sequence[tuple[str, Mapping[str, Any]]]: ...
+
     def to_dict(self) -> dict[str, Any]: ...
 
 
@@ -34,8 +36,18 @@ class SourceAgents:
     def observe(self, state: WorldState, events: Sequence[Event]) -> None:
         return None
 
+    def events(self) -> Sequence[tuple[str, Mapping[str, Any]]]:
+        return ()
+
     def to_dict(self) -> dict[str, Any]:
         return {}
+
+
+def agent_events(
+    tick: int, start: int, notes: Sequence[tuple[str, Mapping[str, Any]]]
+) -> list[Event]:
+    """Agent notes as events of `tick`, numbered on from the engine's (ADR-0018 §6)."""
+    return [Event(tick, start + i, kind, dict(data)) for i, (kind, data) in enumerate(notes)]
 
 
 def run(
@@ -59,9 +71,10 @@ def run(
         if stop_when_extinct and not state.villagers:
             run_dir.save_snapshot(state, agents.to_dict())
             break
+        tick = state.tick
         state, events = engine.step(state, agents.intents(state))
         agents.observe(state, events)
-        log.append_tick(state.tick - 1, events)
+        log.append_tick(tick, [*events, *agent_events(tick, len(events), agents.events())])
         if state.tick % snapshot_every == 0:
             run_dir.save_snapshot(state, agents.to_dict())
     return state

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from typing import Any, Protocol
+from typing import Any, Protocol, runtime_checkable
 
 from pericles.agents.config import AgentConfig
 from pericles.agents.view import Decision, Memory, NodeIndex, OriginCache, View
@@ -16,7 +16,7 @@ from pericles.core.state import Villager, WorldState
 
 FAILURES = ("intent_rejected", "move_failed")
 INTERRUPTED, ENGINE_CAUSE = "work_interrupted", "engine"
-WATCHED = frozenset((*FAILURES, INTERRUPTED))  # the only kinds `_failed` can accept
+WATCHED = frozenset((*FAILURES, INTERRUPTED))  # the only kinds `failed_event` can accept
 ACTION, CONSTRUCTION = "action", "construction"
 
 
@@ -28,7 +28,26 @@ class Mind(Protocol):
     def decide(self, view: View, villager: Villager) -> Decision | None: ...
 
 
-def _failed(event: Event) -> bool:
+@runtime_checkable
+class Planner(Protocol):
+    """A mind that prepares decisions for many villagers at once (ADR-0018 §1)."""
+
+    def prepare(self, view: View, villagers: Sequence[Villager]) -> None: ...
+
+    def decide(self, view: View, villager: Villager) -> Decision | None: ...
+
+    def observe(self, state: WorldState, events: Sequence[Event]) -> None: ...
+
+    def take_events(self) -> list[tuple[str, dict[str, Any]]]: ...
+
+    def to_dict(self) -> dict[str, Any]: ...
+
+    def parse(self, data: Mapping[str, Any]) -> object: ...
+
+    def restore(self, parsed: object) -> None: ...
+
+
+def failed_event(event: Event) -> bool:
     """True if `event` says the villager's current plan did not work out.
 
     Work the engine itself stops (depleted node, full carry, known technology) is a failure;
@@ -85,7 +104,7 @@ class Controller:
     def intents(self, state: WorldState) -> list[Intent]:
         self.memory = {vid: m for vid, m in self.memory.items() if vid in state.villagers}
         view = self.view(state)
-        intents: list[Intent] = []
+        due: list[Villager] = []
         for vid in sorted(state.villagers):
             villager = state.villagers[vid]
             memory = self.memory.get(vid)
@@ -96,18 +115,36 @@ class Controller:
                 continue
             if (villager.path or villager.activity is not None) and not view.urgent(villager):
                 continue
+            due.append(villager)
+        for key, planner in self._planners():
+            group = [v for v in due if v.adult and v.model == key]
+            if group:
+                planner.prepare(view, group)
+        intents: list[Intent] = []
+        for villager in due:
+            memory = self.memory[villager.id]
             decision = self._decide(view, villager)
             if decision is None:
                 memory.idle_until = state.tick + self.config.idle_ticks
                 continue
             if _redundant(villager, decision.intent):
                 continue
-            view.remember(vid, memory, decision.target, decision.job)
+            view.remember(villager.id, memory, decision.target, decision.job)
             if isinstance(decision.intent, Wait):
                 memory.idle_until = state.tick + self.config.idle_ticks
                 continue
             intents.append(decision.intent)
         return intents
+
+    def _planners(self) -> list[tuple[str, Planner]]:
+        return [(k, m) for k, m in sorted(self.minds.items()) if isinstance(m, Planner)]
+
+    def events(self) -> list[tuple[str, dict[str, Any]]]:
+        """Agent events since the last call, planner by planner in model-key order."""
+        out: list[tuple[str, dict[str, Any]]] = []
+        for _, planner in self._planners():
+            out.extend(planner.take_events())
+        return out
 
     def _decide(self, view: View, villager: Villager) -> Decision | None:
         if not villager.adult:
@@ -124,7 +161,7 @@ class Controller:
     def observe(self, state: WorldState, events: Sequence[Event]) -> None:
         """Learn from the tick's failures: avoid failed targets, idle on untargeted failures."""
         for event in events:
-            if event.kind not in WATCHED or not _failed(event):
+            if event.kind not in WATCHED or not failed_event(event):
                 continue
             memory = self.memory.get(str(event.data.get("actor")))
             if memory is None:
@@ -137,15 +174,25 @@ class Controller:
         for memory in self.memory.values():
             if memory.avoid and min(memory.avoid.values()) <= state.tick:
                 memory.avoid = {t: until for t, until in memory.avoid.items() if until > state.tick}
+        for _, planner in self._planners():
+            planner.observe(state, events)
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        out: dict[str, Any] = {
             "fallbacks": self.fallbacks,
             "memory": {vid: self.memory[vid].to_dict() for vid in sorted(self.memory)},
         }
+        planners = self._planners()
+        if planners:
+            out["minds"] = {key: planner.to_dict() for key, planner in planners}
+        return out
 
     def load(self, data: Mapping[str, Any]) -> None:
         """Restore from `to_dict` output. On error the controller is left unchanged."""
         fallbacks = int(data.get("fallbacks", 0))
         memory = {str(k): Memory.from_dict(v) for k, v in data.get("memory", {}).items()}
+        minds = data.get("minds", {})
+        parsed = [(p, p.parse(minds[key])) for key, p in self._planners() if key in minds]
         self.fallbacks, self.memory = fallbacks, memory
+        for planner, value in parsed:
+            planner.restore(value)

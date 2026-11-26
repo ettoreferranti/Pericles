@@ -80,6 +80,9 @@ class Asker:
     def observe(self, state: WorldState, events: Sequence[Event]) -> None:
         return None
 
+    def events(self) -> list[tuple[str, dict[str, Any]]]:
+        return []
+
     def to_dict(self) -> dict[str, Any]:
         return {}
 

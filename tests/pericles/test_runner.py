@@ -20,7 +20,7 @@ from pericles.core.state import Villager, WorldState
 from pericles.experiment import rundir as rundir_module
 from pericles.experiment.defaults import default_config
 from pericles.experiment.rundir import RunDirectory, RunDirectoryError
-from pericles.experiment.runner import IntentSource, SourceAgents, resume, run
+from pericles.experiment.runner import IntentSource, SourceAgents, agent_events, resume, run
 
 pytestmark = pytest.mark.req("REQ-EXP-003")
 
@@ -458,3 +458,56 @@ def test_resume_skips_a_snapshot_whose_agents_blob_will_not_load(
     restored, _ = resume(run_dir, load)
     assert restored.tick == 10
     assert run_dir.skipped == [bad]
+
+
+class NotingAgents(SourceAgents):
+    """Agents that report one plan_made note per tick, as a planner would."""
+
+    def __init__(self, source: IntentSource) -> None:
+        super().__init__(source)
+        self.tick = 0
+
+    def intents(self, state: WorldState) -> Sequence[Intent]:
+        self.tick = state.tick
+        return super().intents(state)
+
+    def events(self) -> list[tuple[str, dict[str, Any]]]:
+        return [("plan_made", {"actor": "a", "tick": self.tick})]
+
+
+@pytest.mark.req("REQ-NFR-001")
+def test_agent_events_follow_the_engine_events_of_their_tick(
+    tmp_path: Path, registry: Registry, small_map: TileMap
+) -> None:
+    """AC1: agent decisions are part of the logged, digested history."""
+    state, walkable = initial(small_map, registry)
+    source = source_for(walkable)
+    base = RunDirectory.create(tmp_path / "base", {}, seed=4)
+    run(base, Engine(registry), state, SourceAgents(source), until_tick=3, snapshot_every=10)
+    engine_events = list(base.event_log.events())
+    assert engine_events  # the comparison below is not vacuous
+
+    noted = RunDirectory.create(tmp_path / "noted", {}, seed=4)
+    state, _ = initial(small_map, registry)  # the engine mutates its input world
+    run(noted, Engine(registry), state, NotingAgents(source), until_tick=3, snapshot_every=10)
+    logged = list(noted.event_log.events())
+    for tick in range(3):
+        mine = [e for e in logged if e.tick == tick]
+        engine = [e for e in engine_events if e.tick == tick]
+        assert [(e.kind, e.data) for e in mine[:-1]] == [(e.kind, e.data) for e in engine]
+        assert (mine[-1].kind, mine[-1].data) == ("plan_made", {"actor": "a", "tick": tick})
+        assert [e.seq for e in mine] == list(range(len(engine) + 1))
+    assert noted.event_log.digest() != base.event_log.digest()
+    base.close()
+    noted.close()
+
+
+@pytest.mark.req("REQ-NFR-001")
+def test_agent_events_numbers_notes_on_from_the_engine_events() -> None:
+    """AC1: notes are events of the tick, numbered after the engine's."""
+    made = agent_events(7, 3, [("plan_made", {"actor": "a"}), ("plan_failed", {"actor": "b"})])
+    assert made == [
+        Event(7, 3, "plan_made", {"actor": "a"}),
+        Event(7, 4, "plan_failed", {"actor": "b"}),
+    ]
+    assert agent_events(7, 3, []) == []
