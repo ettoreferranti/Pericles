@@ -211,7 +211,10 @@ def test_analysis_reads_only_the_event_schema() -> None:
 
 SRC = Path(pericles.__file__).parent
 CLIENTS = ("urllib", "http.client", "requests", "httpx", "ollama", "openai", "mlx", "mlx_lm")
-CLIENT_OWNERS = {"llm/ollama.py": ("urllib",), "llm/mlx_runtime.py": ("mlx", "mlx_lm")}
+CLIENT_OWNERS = {
+    "llm/ollama.py": ("urllib", "http.client"),
+    "llm/mlx_runtime.py": ("mlx", "mlx_lm"),
+}
 BACKEND_MODULES = (
     "pericles.llm.ollama",
     "pericles.llm.mlx",
