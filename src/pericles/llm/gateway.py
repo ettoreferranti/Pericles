@@ -171,7 +171,7 @@ class Gateway:
                     unavailable = (
                         f"{self.backends[spec.backend].describe()}: "
                         f"{self.policy.max_backend_failures} failures in a row; "
-                        f"last: {state.last}"
+                        f"last: {last}"
                     )
                 results.append(Result(request, "", None, None, last, 0, 0, 0.0, False))
                 continue
@@ -210,7 +210,8 @@ class Gateway:
         )
 
     def _attempt(self, backend: Backend, call: BackendCall, health: _Health) -> _Outcome:
-        """Live: one try. Wait: retry with backoff until a success or the backend gives up."""
+        """Live: one try. Wait: retry with backoff until a success, until this request has
+        failed max_backend_failures times in a row, or until the backend gives up."""
         errors: list[str] = []
         while not health.given_up():
             start = self._clock()
@@ -218,7 +219,11 @@ class Gateway:
                 completion = backend.complete(call)
             except BackendError as error:
                 errors.append(str(error))
-                if self.policy.mode == "live" or health.failed(str(error)):
+                if (
+                    self.policy.mode == "live"
+                    or health.failed(str(error))
+                    or len(errors) >= self.policy.max_backend_failures
+                ):
                     break
                 self._sleep(self.policy.delay(len(errors)))
                 continue

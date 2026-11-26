@@ -218,6 +218,20 @@ def test_wait_mode_counts_failures_per_backend_not_per_request(tmp_path: Path) -
 
 
 @pytest.mark.req("REQ-LLM-009")
+def test_a_skipped_request_reports_the_backend_last_error(tmp_path: Path) -> None:
+    """AC1: a later group on a given-up backend is skipped; the message names the last error."""
+    backend = FakeBackend([FakeRule((FakeError("down"),))])
+    models = {"x": ModelSpec("f", "model-x", SAMPLING), "y": ModelSpec("f", "model-y", SAMPLING)}
+    g = gateway({"f": backend}, tmp_path, models=models)
+    with pytest.raises(
+        BackendUnavailable, match=r"^fake backend: 4 failures in a row; last: fake backend: down$"
+    ):
+        g.complete_all([request("bram", model="y"), request("ada", model="x")])
+    assert [c.model for c in backend.calls] == ["model-x"] * 4
+    g.close()
+
+
+@pytest.mark.req("REQ-LLM-009")
 def test_wait_mode_give_up_spares_other_backends(tmp_path: Path) -> None:
     """AC1: a dead backend stops the run but a healthy one's replies are cached and logged."""
     down = FakeBackend([FakeRule((FakeError("down"),))])
@@ -266,6 +280,58 @@ def test_concurrent_requests_share_the_backend_failure_count(tmp_path: Path) -> 
         g.complete_all([request(v) for v in "abcdefgh"])
     assert 4 <= len(backend.calls) <= 4 + 2
     g.close()
+
+
+class Turns(FakeBackend):
+    """Starts calls in a scripted villager order, then lets them run freely."""
+
+    def __init__(self, rules: Sequence[FakeRule], script: Sequence[str]) -> None:
+        super().__init__(rules, concurrency=2)
+        self.script = list(script)
+        self.position = 0
+        self.turn = threading.Condition()
+
+    def _free(self, villager: str) -> bool:
+        return self.position >= len(self.script) or self.script[self.position] == villager
+
+    def complete(self, call: BackendCall) -> Completion:
+        with self.turn:
+            assert self.turn.wait_for(lambda: self._free(call.villager), timeout=5)
+        try:
+            return super().complete(call)
+        finally:
+            with self.turn:
+                if self.position < len(self.script):
+                    self.position += 1
+                self.turn.notify_all()
+
+
+@pytest.mark.req("REQ-LLM-009")
+def test_a_request_stops_after_its_own_max_failures_in_a_row(tmp_path: Path) -> None:
+    """AC1: a request failing max times in a row stops the run, even if others succeed between."""
+    backend = Turns(
+        [
+            FakeRule((FakeError("bad prompt"),), villager="ada"),
+            FakeRule(('{"pick": 3}',)),
+        ],
+        ["ada", "bram", "ada", "cy", "ada"],
+    )
+    policy = FailurePolicy("wait", 2.0, 3.0, 10.0, 3)
+    g = gateway({"f": backend}, tmp_path, policy=policy)
+    with pytest.raises(
+        BackendUnavailable,
+        match="fake backend: 3 failures in a row; last: fake backend: bad prompt",
+    ):
+        g.complete_all([request("ada"), request("bram"), request("cy")])
+    assert [c.villager for c in backend.calls].count("ada") == 3
+    assert g.calls is not None
+    rows = [(r.villager, r.valid) for r in g.calls.records()]
+    assert rows == [("ada", False)] * 3 + [("bram", True), ("cy", True)]
+    g.close()
+    replayer = gateway({"f": FakeBackend()}, tmp_path, mode="replay", policy=policy)
+    again = replayer.complete_all([request("bram"), request("cy")])
+    assert [r.value for r in again] == [Choice(pick=3)] * 2
+    replayer.close()
 
 
 @pytest.mark.req("REQ-LLM-009")
