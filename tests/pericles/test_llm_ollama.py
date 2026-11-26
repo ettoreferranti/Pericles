@@ -28,6 +28,7 @@ class Stub:
     def __init__(self) -> None:
         self.routes: dict[str, tuple[int, bytes]] = {}
         self.seen: list[tuple[str, str, Any]] = []
+        self.truncated: set[str] = set()
         stub = self
 
         class Handler(BaseHTTPRequestHandler):
@@ -38,6 +39,12 @@ class Stub:
                 status, payload = stub.routes.get(self.path, (404, b'{"error": "no route"}'))
                 self.send_response(status)
                 self.send_header("Content-Type", "application/json")
+                if self.path in stub.truncated:
+                    self.send_header("Content-Length", str(len(payload) + 100))
+                    self.end_headers()
+                    self.wfile.write(payload)
+                    self.close_connection = True
+                    return
                 self.end_headers()
                 self.wfile.write(payload)
 
@@ -194,3 +201,47 @@ def test_a_name_without_a_tag_means_latest() -> None:
     """Ollama treats `qwen3` and `qwen3:latest` as the same model."""
     assert tagged("qwen3") == "qwen3:latest"
     assert tagged("qwen3:8b") == "qwen3:8b"
+
+
+@pytest.mark.req("REQ-LLM-009")
+def test_a_truncated_error_body_is_still_a_backend_error(stub: Stub) -> None:
+    """AC1: a connection dropped while reading an HTTP error body is a BackendError."""
+    stub.routes["/x"] = (500, b"short")
+    stub.truncated.add("/x")
+    with pytest.raises(BackendError, match="HTTP 500"):
+        http_json("GET", stub.url + "/x", None, 5.0)
+
+
+@pytest.mark.req("REQ-LLM-009")
+def test_a_url_without_a_scheme_is_a_backend_error() -> None:
+    """AC1: a malformed URL names the method and URL instead of leaking ValueError."""
+    with pytest.raises(BackendError, match="GET localhost"):
+        http_json("GET", "localhost", None, 1.0)
+
+
+@pytest.mark.req("REQ-LLM-002")
+def test_check_on_a_url_without_a_scheme_is_a_setup_error() -> None:
+    """AC1: a mistyped Ollama URL fails fast as a setup error."""
+    with pytest.raises(LLMSetupError, match="cannot reach"):
+        OllamaBackend("localhost", 1.0, 1).check(["qwen3"])
+
+
+@pytest.mark.req("REQ-LLM-009")
+def test_a_deeply_nested_reply_is_a_backend_error(stub: Stub) -> None:
+    """AC1: JSON that blows the parser's recursion limit is a BackendError."""
+    stub.routes["/x"] = (200, b"[" * 100000)
+    with pytest.raises(BackendError, match="not JSON"):
+        http_json("GET", stub.url + "/x", None, 5.0)
+
+
+@pytest.mark.req("REQ-LLM-009")
+@pytest.mark.parametrize("key", ["prompt_eval_count", "eval_count"])
+@pytest.mark.parametrize("value", ["null", '"x"', "[]", "true", "1.5"])
+def test_a_malformed_token_count_is_a_backend_error(stub: Stub, key: str, value: str) -> None:
+    """AC1: token counts that are not integers are a BackendError, not a TypeError."""
+    stub.routes["/api/chat"] = (
+        200,
+        f'{{"message": {{"content": "{{}}"}}, "{key}": {value}}}'.encode(),
+    )
+    with pytest.raises(BackendError, match="unexpected reply"):
+        OllamaBackend(stub.url, 5.0, 1).complete(CALL)

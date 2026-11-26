@@ -20,22 +20,27 @@ def http_json(
     method: str, url: str, body: dict[str, Any] | None, timeout_s: float
 ) -> dict[str, Any]:
     data = None if body is None else json.dumps(body).encode("utf-8")
-    request = urllib.request.Request(
-        url, data=data, method=method, headers={"Content-Type": "application/json"}
-    )
     try:
+        request = urllib.request.Request(
+            url, data=data, method=method, headers={"Content-Type": "application/json"}
+        )
         with urllib.request.urlopen(request, timeout=timeout_s) as response:
             text = response.read().decode("utf-8")
     except urllib.error.HTTPError as error:
-        detail = error.read().decode("utf-8", errors="replace")[:DETAIL]
+        try:
+            detail = error.read().decode("utf-8", errors="replace")[:DETAIL]
+        except (OSError, http.client.HTTPException):
+            detail = ""
         raise BackendError(f"{method} {url}: HTTP {error.code}: {detail}") from None
     except (urllib.error.URLError, OSError, http.client.HTTPException) as error:
         raise BackendError(f"{method} {url}: {error}") from None
     except UnicodeDecodeError:
         raise BackendError(f"{method} {url}: reply is not valid UTF-8") from None
+    except ValueError as error:
+        raise BackendError(f"{method} {url}: {error}") from None
     try:
         payload = json.loads(text)
-    except ValueError:
+    except (ValueError, RecursionError):
         raise BackendError(f"{method} {url}: reply is not JSON: {text[:DETAIL]!r}") from None
     if not isinstance(payload, dict):
         raise BackendError(f"{method} {url}: reply is not a JSON object")
@@ -106,5 +111,11 @@ class OllamaBackend:
         if not isinstance(text, str):
             raise BackendError(f"{self.describe()}: unexpected reply {str(payload)[:DETAIL]}")
         return Completion(
-            text, int(payload.get("prompt_eval_count", 0)), int(payload.get("eval_count", 0))
+            text, self._count(payload, "prompt_eval_count"), self._count(payload, "eval_count")
         )
+
+    def _count(self, payload: dict[str, Any], key: str) -> int:
+        value = payload.get(key, 0)
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise BackendError(f"{self.describe()}: unexpected reply {str(payload)[:DETAIL]}")
+        return value
