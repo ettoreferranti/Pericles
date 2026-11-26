@@ -391,3 +391,14 @@ def test_other_events_change_nothing(registry: Registry, make_world: MakeWorld) 
     before = ctl.to_dict()
     ctl.observe(state, [Event(0, 0, "stopped", {"actor": "a", "at": [0, 0]})])
     assert ctl.to_dict() == before
+
+
+@pytest.mark.req("REQ-AGT-008")
+def test_load_is_atomic(registry: Registry) -> None:
+    """AC2: a blob that fails half-way leaves the controller as it was."""
+    ctl = controller(registry, Script(walk))
+    ctl.fallbacks = 7
+    with pytest.raises((TypeError, ValueError, KeyError, AttributeError)):
+        ctl.load({"fallbacks": 3, "memory": {"v0": "not a memory"}})
+    assert ctl.fallbacks == 7
+    assert ctl.memory == {}

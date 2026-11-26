@@ -44,6 +44,7 @@ engine:
   family_events: [born, died, couple_formed, came_of_age]
   village_events: [building_completed, technology_learned]
   childhood_memory_limit: 20
+  max_map_tiles: 1048576
 
 # Scripted villagers (ADR-0016). Levels are need levels on the 0..critical scale.
 agents:

@@ -6,6 +6,7 @@ import json
 import os
 import platform
 import re
+import sqlite3
 from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -67,6 +68,8 @@ class RunDirectory:
 
     @classmethod
     def create(cls, path: Path, config: Mapping[str, Any], seed: int) -> RunDirectory:
+        if path.exists() and not path.is_dir():
+            raise RunDirectoryError(f"{path}: not a directory")
         if path.exists() and any(path.iterdir()):
             raise RunDirectoryError(f"{path}: directory is not empty; refusing to reuse it")
         path.mkdir(parents=True, exist_ok=True)
@@ -115,8 +118,20 @@ class RunDirectory:
     @property
     def event_log(self) -> EventLog:
         if self._event_log is None:
-            self._event_log = EventLog(self.path / "events.sqlite")
+            try:
+                log = EventLog(self.path / "events.sqlite")
+                log.last_tick()
+            except sqlite3.DatabaseError as error:
+                raise RunDirectoryError(
+                    f"{self.path}: events.sqlite is unreadable ({error})"
+                ) from None
+            self._event_log = log
         return self._event_log
+
+    def skip(self, path: Path) -> None:
+        """Record an unusable snapshot file once."""
+        if path not in self.skipped:
+            self.skipped.append(path)
 
     def snapshot_path(self, tick: int) -> Path:
         return self.path / "snapshots" / f"tick-{tick:010d}.json"
@@ -145,7 +160,8 @@ class RunDirectory:
     def snapshots(self) -> Iterator[Snapshot]:
         """Usable snapshots, newest first; unreadable or mislabelled ones go to `skipped`."""
         ticks, strays = self._snapshot_files()
-        self.skipped.extend(strays)
+        for stray in strays:
+            self.skip(stray)
         for tick in reversed(ticks):
             path = self.snapshot_path(tick)
             try:
@@ -155,7 +171,7 @@ class RunDirectory:
             except (OSError, ValueError, KeyError, TypeError):
                 usable = False
             if not usable:
-                self.skipped.append(path)
+                self.skip(path)
                 continue
             yield snapshot
 

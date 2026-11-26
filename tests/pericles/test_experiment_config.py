@@ -241,3 +241,64 @@ def test_a_world_that_cannot_be_built_creates_no_run_directory(tmp_path: Path) -
     with pytest.raises(ExperimentError):
         start(experiment_from_mapping(MINIMAL, tmp_path), tmp_path / "run")
     assert not (tmp_path / "run").exists()
+
+
+@pytest.mark.req("REQ-EXP-001")
+def test_a_map_larger_than_max_map_tiles_is_a_field_error(tmp_path: Path) -> None:
+    """AC2: a typo like width 1000000000 is refused before the map is generated."""
+    data = changed("map.width", 1_000_000_000)
+    with pytest.raises(ExperimentError, match=r"^map: .* more than engine.max_map_tiles"):
+        experiment_from_mapping(data, tmp_path)
+
+
+@pytest.mark.req("REQ-EXP-001")
+def test_max_map_tiles_is_a_setting(tmp_path: Path) -> None:
+    """AC2: the bound itself comes from the engine section."""
+    data = {**MINIMAL, "engine": {"max_map_tiles": 100}}
+    with pytest.raises(ExperimentError, match="24 × 24 = 576 tiles"):  # noqa: RUF001
+        experiment_from_mapping(data, tmp_path)
+
+
+@pytest.mark.req("REQ-EXP-001")
+@pytest.mark.parametrize("value", [True, "5"])
+def test_skills_must_be_numbers(tmp_path: Path, value: object) -> None:
+    """AC2: a bool or a string is not a skill level."""
+    data = changed("population.0.skills.foraging", value)
+    with pytest.raises(ExperimentError, match=r"^population\[0\]\.skills\.foraging"):
+        experiment_from_mapping(data, tmp_path)
+
+
+@pytest.mark.req("REQ-EXP-001")
+@pytest.mark.parametrize("key", ["bands", "veins"])
+def test_duplicate_terrains_are_field_errors(tmp_path: Path, key: str) -> None:
+    """AC2: a terrain listed twice in bands or veins names the second entry."""
+    entries = {
+        "bands": [{"terrain": "grass", "share": 0.5}, {"terrain": "grass", "share": 0.2}],
+        "veins": [
+            {"terrain": "iron_vein", "share": 0.01, "host": "grass"},
+            {"terrain": "iron_vein", "share": 0.01, "host": "grass"},
+        ],
+    }
+    data = changed(f"map.{key}", entries[key])
+    with pytest.raises(ExperimentError, match=rf"^map\.{key}\[1\]\.terrain: duplicate"):
+        experiment_from_mapping(data, tmp_path)
+
+
+@pytest.mark.req("REQ-EXP-001")
+def test_nested_settings_merge_key_by_key(tmp_path: Path) -> None:
+    """AC1: overriding one relief's act_at keeps the defaults for the others."""
+    data = {**MINIMAL, "agents": {"act_at": {"eat": 40.0}}}
+    experiment = experiment_from_mapping(data, tmp_path)
+    assert experiment.agents.act_at["eat"] == 40.0
+    assert experiment.agents.act_at["sleep"] == 75.0
+
+
+@pytest.mark.req("REQ-EXP-001")
+def test_the_resolved_config_is_portable(tmp_path: Path) -> None:
+    """AC1: the base pack is stored by name and the map holds every MapParams field."""
+    resolved = experiment_from_mapping(MINIMAL, tmp_path).resolved
+    assert resolved["packs"] == ["base"]
+    assert resolved["map"]["octaves"] == 3
+    assert resolved["map"]["veins"] == []
+    rebuilt = experiment_from_mapping(resolved, tmp_path / "elsewhere")
+    assert rebuilt.map == experiment_from_mapping(MINIMAL, tmp_path).map

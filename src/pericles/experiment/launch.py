@@ -39,9 +39,8 @@ def reopen(out: Path) -> Session:
     try:
         experiment = experiment_from_mapping(run_dir.config, run_dir.path)
         engine = Engine(experiment.registry, experiment.engine)
-        state, agents = resume(run_dir)
         controller = scripted_controller(engine.context, experiment.agents)
-        controller.load(agents)
+        state, _ = resume(run_dir, controller.load)
     except BaseException:
         run_dir.close()
         raise

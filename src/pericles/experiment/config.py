@@ -2,12 +2,22 @@
 
 from __future__ import annotations
 
+import dataclasses
+import json
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Annotated, Any
 
-from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictStr, ValidationError
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StrictFloat,
+    StrictInt,
+    StrictStr,
+    ValidationError,
+)
 
 from pericles.agents.config import AgentConfig
 from pericles.core.config import EngineConfig
@@ -46,7 +56,9 @@ class VillagerSpec(_Spec):
     sex: StrictStr | None = None
     age_days: Annotated[StrictInt, Field(ge=0)]
     traits: tuple[StrictStr, ...] = ()
-    skills: dict[StrictStr, Annotated[float, Field(ge=0)]] = Field(default_factory=dict)
+    skills: dict[StrictStr, Annotated[StrictFloat | StrictInt, Field(ge=0)]] = Field(
+        default_factory=dict
+    )
     knowledge: tuple[StrictStr, ...] = ()
     model: StrictStr | None = None
     inventory: dict[StrictStr, Annotated[StrictInt, Field(gt=0)]] = Field(default_factory=dict)
@@ -104,13 +116,31 @@ def _registry(packs: tuple[Path, ...]) -> Registry:
         raise ExperimentError(f"packs: {error}") from None
 
 
-def _merged(section: str, data: object) -> dict[str, Any]:
+REPLACED_WHOLE = ("calendar",)
+
+
+def merged(section: str, data: object) -> dict[str, Any]:
+    """The packaged defaults for `section` overridden key by key, one level deep.
+
+    A nested mapping (such as `act_at`) merges with the default mapping; `calendar` replaces
+    the default calendar whole (ADR-0016 §5)."""
     defaults = dict(default_settings_mapping()[section])
     overrides = {} if data is None else dict(as_mapping(data, section))
-    return {**defaults, **overrides}
+    out = dict(defaults)
+    for key, value in overrides.items():
+        default = out.get(key)
+        if (
+            key not in REPLACED_WHOLE
+            and isinstance(value, Mapping)
+            and isinstance(default, Mapping)
+        ):
+            out[key] = {**default, **value}
+        else:
+            out[key] = value
+    return out
 
 
-def _map(data: object, registry: Registry) -> MapParams:
+def _map(data: object, registry: Registry, engine: EngineConfig) -> MapParams:
     raw = as_mapping(data, "map")
     values = values_for(MapParams, raw, "map", nested={"bands", "veins"})
 
@@ -122,6 +152,24 @@ def _map(data: object, registry: Registry) -> MapParams:
         )
 
     params = MapParams(**values, bands=parts("bands", Band), veins=parts("veins", Vein))
+    tiles = params.width * params.height
+    if tiles > engine.max_map_tiles:
+        raise ExperimentError(
+            f"map: {params.width} × {params.height} = {tiles} tiles is more than "  # noqa: RUF001
+            f"engine.max_map_tiles {engine.max_map_tiles}"
+        )
+    entry_lists: tuple[tuple[str, Sequence[Band | Vein]], ...] = (
+        ("bands", params.bands),
+        ("veins", params.veins),
+    )
+    for key, entries in entry_lists:
+        seen: set[str] = set()
+        for i, entry in enumerate(entries):
+            if entry.terrain in seen:
+                raise ExperimentError(
+                    f"map.{key}[{i}].terrain: duplicate terrain {entry.terrain!r}"
+                )
+            seen.add(entry.terrain)
     try:
         validate(params, registry)
     except ValueError as error:
@@ -201,20 +249,20 @@ def experiment_from_mapping(raw: object, base_dir: Path) -> Experiment:
     try:
         packs = _packs(raw.get("packs"), base_dir)
         registry = _registry(packs)
-        engine_data = _merged("engine", raw.get("engine"))
-        agents_data = _merged("agents", raw.get("agents"))
+        engine_data = merged("engine", raw.get("engine"))
+        agents_data = merged("agents", raw.get("agents"))
         engine = engine_config_from_mapping(engine_data, "engine")
         agents = agent_config_from_mapping(agents_data, "agents")
         _check_agents(agents, registry)
-        params = _map(raw["map"], registry)
+        params = _map(raw["map"], registry, engine)
         population = _population(raw["population"], registry, engine)
         run: RunSpec = _pydantic(RunSpec, raw["run"], "run")
     except SettingsError as error:
         raise ExperimentError(str(error)) from None
     resolved = {
         "seed": seed,
-        "packs": [str(p) for p in packs],
-        "map": dict(as_mapping(raw["map"], "map")),
+        "packs": [BASE if p == base_pack_path() else str(p) for p in packs],
+        "map": json.loads(json.dumps(dataclasses.asdict(params))),
         "population": [spec.model_dump(mode="json", exclude_defaults=True) for spec in population],
         "run": run.model_dump(mode="json"),
         "engine": engine_data,
@@ -254,7 +302,7 @@ def build_world(experiment: Experiment) -> WorldState:
             spec.id,
             spec.name,
             spots[i % len(spots)],
-            skills=dict(spec.skills),
+            skills={k: float(v) for k, v in spec.skills.items()},
             knowledge=set(spec.knowledge),
             traits=spec.traits,
             sex=spec.sex,

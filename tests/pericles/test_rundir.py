@@ -113,3 +113,31 @@ def test_open_rejects_an_unreadable_meta(tmp_path: Path) -> None:
     (tmp_path / "run" / "meta.json").write_text("[]", encoding="utf-8")
     with pytest.raises(RunDirectoryError, match="unreadable"):
         RunDirectory.open(tmp_path / "run")
+
+
+def test_create_on_a_regular_file_is_a_run_directory_error(tmp_path: Path) -> None:
+    """AC1: a file in the way is reported, not a raw NotADirectoryError."""
+    target = tmp_path / "run"
+    target.write_text("not a directory", encoding="utf-8")
+    with pytest.raises(RunDirectoryError, match="not a directory"):
+        RunDirectory.create(target, {}, seed=1)
+
+
+def test_a_corrupt_event_log_is_a_run_directory_error(tmp_path: Path) -> None:
+    """AC3: a damaged events.sqlite is named, not a raw sqlite3.DatabaseError."""
+    run = RunDirectory.create(tmp_path / "run", {}, seed=1)
+    run.close()
+    (tmp_path / "run" / "events.sqlite").write_bytes(b"garbage" * 100)
+    opened = RunDirectory.open(tmp_path / "run")
+    with pytest.raises(RunDirectoryError, match=r"events\.sqlite is unreadable"):
+        _ = opened.event_log
+
+
+def test_skipped_lists_each_file_once(tmp_path: Path) -> None:
+    """AC3: asking for snapshots twice does not repeat the skipped files."""
+    run = RunDirectory.create(tmp_path / "run", {}, seed=1)
+    (tmp_path / "run" / "snapshots" / "tick-0000000005.json").write_text("{", encoding="utf-8")
+    list(run.snapshots())
+    list(run.snapshots())
+    assert run.skipped == [run.snapshot_path(5)]
+    run.close()

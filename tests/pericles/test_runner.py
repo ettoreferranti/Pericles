@@ -1,3 +1,4 @@
+import json
 import os
 import shutil
 from collections.abc import Iterator, Sequence
@@ -434,3 +435,26 @@ def test_create_fsyncs_its_directories(tmp_path: Path, monkeypatch: pytest.Monke
     monkeypatch.setattr(rundir_module, "_fsync_dir", spy)
     RunDirectory.create(tmp_path / "run", {}, seed=1).close()
     assert "snapshots" in synced and "llm_cache" in synced
+
+
+def test_resume_skips_a_snapshot_whose_agents_blob_will_not_load(
+    tmp_path: Path, registry: Registry, small_map: TileMap
+) -> None:
+    """AC3: a malformed agents blob falls back to the previous snapshot."""
+    state, walkable = initial(small_map, registry)
+    run_dir = RunDirectory.create(tmp_path / "run", {}, seed=4)
+    engine = Engine(registry, default_config())
+    run(run_dir, engine, state, SourceAgents(source_for(walkable)), 20, 10)
+    bad = run_dir.snapshot_path(20)
+    payload = json.loads(bad.read_text(encoding="utf-8"))
+    payload["agents"] = {"memory": {"v0": "not a memory"}}
+    bad.write_text(json.dumps(payload), encoding="utf-8")
+
+    def load(agents: dict[str, Any]) -> None:
+        for value in agents.get("memory", {}).values():
+            if not isinstance(value, dict):
+                raise TypeError("memory entries are mappings")
+
+    restored, _ = resume(run_dir, load)
+    assert restored.tick == 10
+    assert run_dir.skipped == [bad]
