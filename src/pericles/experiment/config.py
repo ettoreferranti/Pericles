@@ -28,15 +28,19 @@ from pericles.core.mapgen import Band, MapParams, Vein, generate_map, start_area
 from pericles.core.nodes import place_nodes
 from pericles.core.state import Villager, WorldState
 from pericles.experiment.defaults import default_settings_mapping
+from pericles.experiment.models import assign_models
 from pericles.experiment.settings import (
     SettingsError,
     agent_config_from_mapping,
     as_mapping,
     engine_config_from_mapping,
+    llm_config_from_mapping,
+    llm_config_to_mapping,
     values_for,
 )
+from pericles.llm.config import LLMConfig
 
-SECTIONS = ("seed", "packs", "map", "population", "run", "engine", "agents")
+SECTIONS = ("seed", "packs", "map", "population", "run", "engine", "agents", "llm")
 REQUIRED = ("seed", "map", "population", "run")
 BASE = "base"
 ID = r"^[a-z][a-z0-9_]*$"
@@ -78,6 +82,7 @@ class Experiment:
     run: RunSpec
     engine: EngineConfig
     agents: AgentConfig
+    llm: LLMConfig
     registry: Registry
     resolved: dict[str, Any]
 
@@ -231,6 +236,31 @@ def _population(data: object, registry: Registry, engine: EngineConfig) -> tuple
     return tuple(specs)
 
 
+def _llm_paths(llm: LLMConfig, base_dir: Path) -> LLMConfig:
+    """Fake replies and cache_from resolve against the experiment file (ADR-0017 §9)."""
+
+    def absolute(path: str | None) -> str | None:
+        return None if path is None else str((base_dir / path).resolve())
+
+    backends = {
+        key: dataclasses.replace(spec, replies=absolute(spec.replies))
+        for key, spec in llm.backends.items()
+    }
+    return dataclasses.replace(llm, backends=backends, cache_from=absolute(llm.cache_from))
+
+
+def _check_models(population: Sequence[VillagerSpec], engine: EngineConfig, llm: LLMConfig) -> None:
+    for i, spec in enumerate(population):
+        if spec.model is not None and spec.model not in llm.models:
+            raise ExperimentError(
+                f"population[{i}].model: unknown model {spec.model!r}; define it under llm.models"
+            )
+    if engine.adult_model is not None and engine.adult_model not in llm.models:
+        raise ExperimentError(
+            f"engine.adult_model: unknown model {engine.adult_model!r}; define it under llm.models"
+        )
+
+
 def experiment_from_mapping(raw: object, base_dir: Path) -> Experiment:
     if not isinstance(raw, Mapping):
         raise ExperimentError("experiment: expected a mapping")
@@ -253,9 +283,12 @@ def experiment_from_mapping(raw: object, base_dir: Path) -> Experiment:
         agents_data = merged("agents", raw.get("agents"))
         engine = engine_config_from_mapping(engine_data, "engine")
         agents = agent_config_from_mapping(agents_data, "agents")
+        llm = _llm_paths(llm_config_from_mapping(merged("llm", raw.get("llm")), "llm"), base_dir)
         _check_agents(agents, registry)
         params = _map(raw["map"], registry, engine)
         population = _population(raw["population"], registry, engine)
+        _check_models(population, engine, llm)
+        population = assign_models(population, engine.adult_age_days, llm.assign, seed)
         run: RunSpec = _pydantic(RunSpec, raw["run"], "run")
     except SettingsError as error:
         raise ExperimentError(str(error)) from None
@@ -267,8 +300,9 @@ def experiment_from_mapping(raw: object, base_dir: Path) -> Experiment:
         "run": run.model_dump(mode="json"),
         "engine": engine_data,
         "agents": agents_data,
+        "llm": llm_config_to_mapping(llm),
     }
-    return Experiment(seed, packs, params, population, run, engine, agents, registry, resolved)
+    return Experiment(seed, packs, params, population, run, engine, agents, llm, registry, resolved)
 
 
 def load_experiment(path: Path) -> Experiment:

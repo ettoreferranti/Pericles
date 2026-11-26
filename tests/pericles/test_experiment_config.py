@@ -39,6 +39,10 @@ MINIMAL: dict[str, Any] = {
         },
     ],
     "run": {"days": 2, "snapshot_every_days": 1},
+    "llm": {
+        "backends": {"test": {"kind": "fake"}},
+        "models": {"m": {"backend": "test", "name": "fake-m"}},
+    },
 }
 
 
@@ -302,3 +306,51 @@ def test_the_resolved_config_is_portable(tmp_path: Path) -> None:
     assert resolved["map"]["veins"] == []
     rebuilt = experiment_from_mapping(resolved, tmp_path / "elsewhere")
     assert rebuilt.map == experiment_from_mapping(MINIMAL, tmp_path).map
+
+
+@pytest.mark.req("REQ-LLM-006")
+def test_the_llm_section_assigns_models_and_is_resolved(tmp_path: Path) -> None:
+    """AC1: pinned villagers keep their model; the split is recorded in the resolved config."""
+    data = changed("llm.assign", {"m": 1.0})
+    data["population"].append({"id": "c", "name": "C", "sex": "male", "age_days": 300})
+    experiment = experiment_from_mapping(data, tmp_path)
+    models = {spec.id: spec.model for spec in experiment.population}
+    assert models == {"a": "m", "b": "m", "c": "m"}
+    assert experiment.llm.models["m"].name == "fake-m"
+    resolved = experiment.resolved
+    assert [p.get("model") for p in resolved["population"]] == ["m", "m", "m"]
+    assert resolved["llm"]["models"]["m"]["temperature"] == 0.7
+    again = experiment_from_mapping(resolved, tmp_path)
+    assert again.population == experiment.population and again.llm == experiment.llm
+
+
+@pytest.mark.req("REQ-LLM-006")
+def test_paths_in_the_llm_section_resolve_against_the_experiment(tmp_path: Path) -> None:
+    """AC1: fake replies and cache_from are stored as absolute paths."""
+    data = changed("llm.backends.test", {"kind": "fake", "replies": "replies.yaml"})
+    data["llm"]["cache"] = "replay"
+    data["llm"]["cache_from"] = "old-run"
+    experiment = experiment_from_mapping(data, tmp_path)
+    assert experiment.llm.backends["test"].replies == str((tmp_path / "replies.yaml").resolve())
+    assert experiment.llm.cache_from == str((tmp_path / "old-run").resolve())
+
+
+@pytest.mark.req("REQ-LLM-006")
+@pytest.mark.parametrize(
+    ("path", "value", "prefix"),
+    [
+        ("population.1.model", "ghost", r"population\[1\]\.model: unknown model 'ghost'"),
+        (
+            "engine",
+            {"model_rule": "fixed", "adult_model": "ghost"},
+            r"engine\.adult_model: unknown model 'ghost'",
+        ),
+        ("llm.models.m.backend", "nowhere", r"llm: models\.m\.backend: unknown backend"),
+        ("llm.assign", {"ghost": 1.0}, r"llm: assign\.ghost: unknown model"),
+        ("llm.colour", "red", r"llm\.colour: unknown setting"),
+    ],
+)
+def test_model_errors_name_the_field(tmp_path: Path, path: str, value: object, prefix: str) -> None:
+    """AC1: an undefined model or backend is a field error."""
+    with pytest.raises(ExperimentError, match=f"^{prefix}"):
+        experiment_from_mapping(changed(path, value), tmp_path)
