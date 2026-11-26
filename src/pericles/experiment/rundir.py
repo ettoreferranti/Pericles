@@ -67,7 +67,13 @@ class RunDirectory:
         self.skipped: list[Path] = []
 
     @classmethod
-    def create(cls, path: Path, config: Mapping[str, Any], seed: int) -> RunDirectory:
+    def create(
+        cls,
+        path: Path,
+        config: Mapping[str, Any],
+        seed: int,
+        extra: Mapping[str, Any] | None = None,
+    ) -> RunDirectory:
         if path.exists() and not path.is_dir():
             raise RunDirectoryError(f"{path}: not a directory")
         if path.exists() and any(path.iterdir()):
@@ -81,6 +87,7 @@ class RunDirectory:
             "seed": seed,
             "created_utc": datetime.now(UTC).isoformat(),
         }
+        meta.update(dict(extra or {}))
         _write_durably(path / "meta.json", json.dumps(meta, indent=2))
         for name in ("snapshots", "llm_cache"):
             (path / name).mkdir()
