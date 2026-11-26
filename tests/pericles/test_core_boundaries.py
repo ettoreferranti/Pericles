@@ -5,6 +5,7 @@ from typing import cast
 
 import pytest
 
+import pericles
 import pericles.agents
 import pericles.core
 
@@ -204,5 +205,71 @@ def test_analysis_reads_only_the_event_schema() -> None:
         for name in imported_modules(path, "pericles.analysis")
         if name.startswith("pericles")
         and not name.startswith(("pericles.core.events", "pericles.analysis"))
+    ]
+    assert offenders == []
+
+
+SRC = Path(pericles.__file__).parent
+CLIENTS = ("urllib", "http.client", "requests", "httpx", "ollama", "openai", "mlx", "mlx_lm")
+CLIENT_OWNERS = {
+    "llm/ollama.py": ("urllib", "http.client"),
+    "llm/mlx_runtime.py": ("mlx", "mlx_lm"),
+}
+BACKEND_MODULES = (
+    "pericles.llm.ollama",
+    "pericles.llm.mlx",
+    "pericles.llm.mlx_runtime",
+    "pericles.llm.fake",
+)
+LLM_MAY_IMPORT = ("pericles.llm", "pericles.core.canonical")
+
+
+def _sources() -> list[tuple[str, set[str]]]:
+    found = []
+    for path in sorted(SRC.rglob("*.py")):
+        relative = path.relative_to(SRC).as_posix()
+        package = ".".join(("pericles", *path.relative_to(SRC).parts[:-1]))
+        found.append((relative, imported_modules(path, package)))
+    return found
+
+
+def _within(name: str, prefixes: tuple[str, ...]) -> bool:
+    return any(name == p or name.startswith(p + ".") for p in prefixes)
+
+
+@pytest.mark.req("REQ-LLM-001")
+def test_only_the_backend_modules_import_a_model_client() -> None:
+    """AC1: no other module imports an HTTP or MLX client."""
+    offenders = [
+        f"{relative}: {name}"
+        for relative, names in _sources()
+        for name in names
+        if _within(name, CLIENTS) and not _within(name, CLIENT_OWNERS.get(relative, ()))
+    ]
+    assert offenders == []
+
+
+@pytest.mark.req("REQ-LLM-001")
+def test_only_llm_and_experiment_construct_backends() -> None:
+    """AC1: agents and the rest reach models only through the gateway."""
+    offenders = [
+        f"{relative}: {name}"
+        for relative, names in _sources()
+        if not relative.startswith(("llm/", "experiment/"))
+        for name in names
+        if _within(name, BACKEND_MODULES)
+    ]
+    assert offenders == []
+
+
+@pytest.mark.req("REQ-LLM-001")
+def test_llm_imports_no_other_pericles_package() -> None:
+    """AC1: the gateway knows no villages."""
+    offenders = [
+        f"{relative}: {name}"
+        for relative, names in _sources()
+        if relative.startswith("llm/")
+        for name in names
+        if name.startswith("pericles") and name != "pericles" and not _within(name, LLM_MAY_IMPORT)
     ]
     assert offenders == []

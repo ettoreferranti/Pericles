@@ -1,4 +1,5 @@
 import dataclasses
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -13,15 +14,21 @@ from pericles.experiment.defaults import (
     DEFAULT_SETTINGS,
     default_agent_config,
     default_config,
+    default_llm_config,
     default_settings_mapping,
 )
 from pericles.experiment.settings import (
     SettingsError,
     agent_config_from_mapping,
     engine_config_from_mapping,
+    llm_config_from_mapping,
+    llm_config_to_mapping,
     load_agent_settings,
+    load_llm_settings,
     load_settings,
 )
+from pericles.llm.config import BackendSpec, LLMConfig
+from pericles.llm.types import ModelSpec, Sampling
 
 
 def write(tmp_path: Path, text: str) -> Path:
@@ -216,3 +223,81 @@ def test_default_settings_list_every_agent_parameter() -> None:
     assert default_settings_mapping() == raw
     assert default_agent_config() == AgentConfig()
     assert default_agent_config(idle_ticks=3).idle_ticks == 3
+
+
+@pytest.mark.req("REQ-LLM-006")
+def test_llm_section_loads_backends_models_and_assignment(tmp_path: Path) -> None:
+    """AC1: models take per-model sampling and fall back to the section defaults."""
+    path = tmp_path / "settings.yaml"
+    path.write_text(
+        "llm:\n"
+        "  temperature: 0.5\n"
+        "  backends:\n"
+        "    local: {kind: ollama}\n"
+        "    test: {kind: fake, concurrency: 3, replies: replies.yaml}\n"
+        "  models:\n"
+        "    qwen: {backend: local, name: 'qwen3:latest', top_p: 0.8}\n"
+        "    fake: {backend: test, name: echo, temperature: 0, max_tokens: 16}\n"
+        "  assign: {qwen: 2, fake: 1}\n",
+        encoding="utf-8",
+    )
+    llm = load_llm_settings(path)
+    assert llm.backends["local"] == BackendSpec("ollama", 1, 300.0, url="http://localhost:11434")
+    assert llm.backends["test"] == BackendSpec("fake", 3, 300.0, replies="replies.yaml")
+    assert llm.models["qwen"] == ModelSpec("local", "qwen3:latest", Sampling(0.5, 0.8, 512))
+    assert llm.models["fake"] == ModelSpec("test", "echo", Sampling(0.0, 0.9, 16))
+    assert dict(llm.assign) == {"qwen": 2.0, "fake": 1.0}
+
+
+@pytest.mark.req("REQ-LLM-006")
+@pytest.mark.parametrize(
+    ("text", "message"),
+    [
+        ("llm: {colour: red}\n", r"^llm\.colour: unknown setting"),
+        (
+            "llm: {backends: {local: {kind: ollama, port: 1}}}\n",
+            r"^llm\.backends\.local\.port: unknown setting",
+        ),
+        ("llm: {backends: {local: {}}}\n", r"^llm\.backends\.local\.kind: missing"),
+        ("llm: {backends: [1]}\n", r"^llm\.backends: expected a mapping"),
+        ("llm: {models: {q: {backend: x}}}\n", r"^llm\.models\.q\.name: missing"),
+        ("llm: {assign: {q: high}}\n", r"^llm\.assign\.q: expected a number"),
+        ("llm: {assign: {q: true}}\n", r"^llm\.assign\.q: expected a number"),
+        (
+            "llm: {models: {q: {backend: x, name: n}}}\n",
+            r"^llm: models\.q\.backend: unknown backend 'x'",
+        ),
+    ],
+)
+def test_llm_settings_errors_name_the_field(tmp_path: Path, text: str, message: str) -> None:
+    """AC1: configuration errors start with the dotted path."""
+    path = tmp_path / "settings.yaml"
+    path.write_text(text, encoding="utf-8")
+    with pytest.raises(SettingsError, match=message):
+        load_llm_settings(path)
+
+
+@pytest.mark.req("REQ-LLM-006")
+def test_llm_config_round_trips_through_its_mapping() -> None:
+    """AC1: the resolved config can be read back."""
+    llm = replace(
+        default_llm_config(),
+        mode="live",
+        cache="replay",
+        cache_from="runs/a",
+        ollama_url="http://example:1",
+        backends={
+            "t": BackendSpec("fake", 2, 5.0, replies="r.yaml"),
+            "o": BackendSpec("ollama", 1, 7.0, url="http://example:2"),
+        },
+        models={"m": ModelSpec("t", "echo", Sampling(0.1, 0.5, 8))},
+        assign={"m": 1.0},
+    )
+    assert llm_config_from_mapping(llm_config_to_mapping(llm)) == llm
+
+
+def test_default_settings_list_every_llm_parameter() -> None:
+    """No magic values: the packaged file names every LLMConfig field."""
+    section = default_settings_mapping()["llm"]
+    assert set(section) == {f.name for f in dataclasses.fields(LLMConfig)}
+    assert default_llm_config() == LLMConfig()

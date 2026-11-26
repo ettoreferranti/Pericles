@@ -2,12 +2,22 @@
 
 from __future__ import annotations
 
+import dataclasses
+import json
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Annotated, Any
 
-from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictStr, ValidationError
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StrictFloat,
+    StrictInt,
+    StrictStr,
+    ValidationError,
+)
 
 from pericles.agents.config import AgentConfig
 from pericles.core.config import EngineConfig
@@ -18,15 +28,19 @@ from pericles.core.mapgen import Band, MapParams, Vein, generate_map, start_area
 from pericles.core.nodes import place_nodes
 from pericles.core.state import Villager, WorldState
 from pericles.experiment.defaults import default_settings_mapping
+from pericles.experiment.models import assign_models
 from pericles.experiment.settings import (
     SettingsError,
     agent_config_from_mapping,
     as_mapping,
     engine_config_from_mapping,
+    llm_config_from_mapping,
+    llm_config_to_mapping,
     values_for,
 )
+from pericles.llm.config import LLMConfig
 
-SECTIONS = ("seed", "packs", "map", "population", "run", "engine", "agents")
+SECTIONS = ("seed", "packs", "map", "population", "run", "engine", "agents", "llm")
 REQUIRED = ("seed", "map", "population", "run")
 BASE = "base"
 ID = r"^[a-z][a-z0-9_]*$"
@@ -46,7 +60,9 @@ class VillagerSpec(_Spec):
     sex: StrictStr | None = None
     age_days: Annotated[StrictInt, Field(ge=0)]
     traits: tuple[StrictStr, ...] = ()
-    skills: dict[StrictStr, Annotated[float, Field(ge=0)]] = Field(default_factory=dict)
+    skills: dict[StrictStr, Annotated[StrictFloat | StrictInt, Field(ge=0)]] = Field(
+        default_factory=dict
+    )
     knowledge: tuple[StrictStr, ...] = ()
     model: StrictStr | None = None
     inventory: dict[StrictStr, Annotated[StrictInt, Field(gt=0)]] = Field(default_factory=dict)
@@ -66,6 +82,7 @@ class Experiment:
     run: RunSpec
     engine: EngineConfig
     agents: AgentConfig
+    llm: LLMConfig
     registry: Registry
     resolved: dict[str, Any]
 
@@ -104,13 +121,31 @@ def _registry(packs: tuple[Path, ...]) -> Registry:
         raise ExperimentError(f"packs: {error}") from None
 
 
-def _merged(section: str, data: object) -> dict[str, Any]:
+REPLACED_WHOLE = ("calendar",)
+
+
+def merged(section: str, data: object) -> dict[str, Any]:
+    """The packaged defaults for `section` overridden key by key, one level deep.
+
+    A nested mapping (such as `act_at`) merges with the default mapping; `calendar` replaces
+    the default calendar whole (ADR-0016 §5)."""
     defaults = dict(default_settings_mapping()[section])
     overrides = {} if data is None else dict(as_mapping(data, section))
-    return {**defaults, **overrides}
+    out = dict(defaults)
+    for key, value in overrides.items():
+        default = out.get(key)
+        if (
+            key not in REPLACED_WHOLE
+            and isinstance(value, Mapping)
+            and isinstance(default, Mapping)
+        ):
+            out[key] = {**default, **value}
+        else:
+            out[key] = value
+    return out
 
 
-def _map(data: object, registry: Registry) -> MapParams:
+def _map(data: object, registry: Registry, engine: EngineConfig) -> MapParams:
     raw = as_mapping(data, "map")
     values = values_for(MapParams, raw, "map", nested={"bands", "veins"})
 
@@ -122,6 +157,24 @@ def _map(data: object, registry: Registry) -> MapParams:
         )
 
     params = MapParams(**values, bands=parts("bands", Band), veins=parts("veins", Vein))
+    tiles = params.width * params.height
+    if tiles > engine.max_map_tiles:
+        raise ExperimentError(
+            f"map: {params.width} × {params.height} = {tiles} tiles is more than "  # noqa: RUF001
+            f"engine.max_map_tiles {engine.max_map_tiles}"
+        )
+    entry_lists: tuple[tuple[str, Sequence[Band | Vein]], ...] = (
+        ("bands", params.bands),
+        ("veins", params.veins),
+    )
+    for key, entries in entry_lists:
+        seen: set[str] = set()
+        for i, entry in enumerate(entries):
+            if entry.terrain in seen:
+                raise ExperimentError(
+                    f"map.{key}[{i}].terrain: duplicate terrain {entry.terrain!r}"
+                )
+            seen.add(entry.terrain)
     try:
         validate(params, registry)
     except ValueError as error:
@@ -183,6 +236,31 @@ def _population(data: object, registry: Registry, engine: EngineConfig) -> tuple
     return tuple(specs)
 
 
+def _llm_paths(llm: LLMConfig, base_dir: Path) -> LLMConfig:
+    """Fake replies and cache_from resolve against the experiment file (ADR-0017 §9)."""
+
+    def absolute(path: str | None) -> str | None:
+        return None if path is None else str((base_dir / path).resolve())
+
+    backends = {
+        key: dataclasses.replace(spec, replies=absolute(spec.replies))
+        for key, spec in llm.backends.items()
+    }
+    return dataclasses.replace(llm, backends=backends, cache_from=absolute(llm.cache_from))
+
+
+def _check_models(population: Sequence[VillagerSpec], engine: EngineConfig, llm: LLMConfig) -> None:
+    for i, spec in enumerate(population):
+        if spec.model is not None and spec.model not in llm.models:
+            raise ExperimentError(
+                f"population[{i}].model: unknown model {spec.model!r}; define it under llm.models"
+            )
+    if engine.adult_model is not None and engine.adult_model not in llm.models:
+        raise ExperimentError(
+            f"engine.adult_model: unknown model {engine.adult_model!r}; define it under llm.models"
+        )
+
+
 def experiment_from_mapping(raw: object, base_dir: Path) -> Experiment:
     if not isinstance(raw, Mapping):
         raise ExperimentError("experiment: expected a mapping")
@@ -201,26 +279,30 @@ def experiment_from_mapping(raw: object, base_dir: Path) -> Experiment:
     try:
         packs = _packs(raw.get("packs"), base_dir)
         registry = _registry(packs)
-        engine_data = _merged("engine", raw.get("engine"))
-        agents_data = _merged("agents", raw.get("agents"))
+        engine_data = merged("engine", raw.get("engine"))
+        agents_data = merged("agents", raw.get("agents"))
         engine = engine_config_from_mapping(engine_data, "engine")
         agents = agent_config_from_mapping(agents_data, "agents")
+        llm = _llm_paths(llm_config_from_mapping(merged("llm", raw.get("llm")), "llm"), base_dir)
         _check_agents(agents, registry)
-        params = _map(raw["map"], registry)
+        params = _map(raw["map"], registry, engine)
         population = _population(raw["population"], registry, engine)
+        _check_models(population, engine, llm)
+        population = assign_models(population, engine.adult_age_days, llm.assign, seed)
         run: RunSpec = _pydantic(RunSpec, raw["run"], "run")
     except SettingsError as error:
         raise ExperimentError(str(error)) from None
     resolved = {
         "seed": seed,
-        "packs": [str(p) for p in packs],
-        "map": dict(as_mapping(raw["map"], "map")),
+        "packs": [BASE if p == base_pack_path() else str(p) for p in packs],
+        "map": json.loads(json.dumps(dataclasses.asdict(params))),
         "population": [spec.model_dump(mode="json", exclude_defaults=True) for spec in population],
         "run": run.model_dump(mode="json"),
         "engine": engine_data,
         "agents": agents_data,
+        "llm": llm_config_to_mapping(llm),
     }
-    return Experiment(seed, packs, params, population, run, engine, agents, registry, resolved)
+    return Experiment(seed, packs, params, population, run, engine, agents, llm, registry, resolved)
 
 
 def load_experiment(path: Path) -> Experiment:
@@ -254,7 +336,7 @@ def build_world(experiment: Experiment) -> WorldState:
             spec.id,
             spec.name,
             spots[i % len(spots)],
-            skills=dict(spec.skills),
+            skills={k: float(v) for k, v in spec.skills.items()},
             knowledge=set(spec.knowledge),
             traits=spec.traits,
             sex=spec.sex,

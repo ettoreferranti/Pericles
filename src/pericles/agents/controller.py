@@ -145,5 +145,7 @@ class Controller:
         }
 
     def load(self, data: Mapping[str, Any]) -> None:
-        self.fallbacks = int(data.get("fallbacks", 0))
-        self.memory = {str(k): Memory.from_dict(v) for k, v in data.get("memory", {}).items()}
+        """Restore from `to_dict` output. On error the controller is left unchanged."""
+        fallbacks = int(data.get("fallbacks", 0))
+        memory = {str(k): Memory.from_dict(v) for k, v in data.get("memory", {}).items()}
+        self.fallbacks, self.memory = fallbacks, memory

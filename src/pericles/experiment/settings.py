@@ -16,8 +16,10 @@ from pericles.core.config import EngineConfig
 from pericles.core.content.loader import ContentError, read_yaml
 from pericles.core.content.schema import ModifierDef
 from pericles.core.modifiers import Modifier
+from pericles.llm.config import BackendSpec, LLMConfig
+from pericles.llm.types import ModelSpec, Sampling
 
-SECTIONS = ("engine", "agents")
+SECTIONS = ("engine", "agents", "llm")
 
 
 class SettingsError(ValueError):
@@ -129,3 +131,92 @@ def load_settings(path: Path) -> EngineConfig:
 
 def load_agent_settings(path: Path) -> AgentConfig:
     return agent_config_from_mapping(_read(path).get("agents", {}))
+
+
+LLM_NESTED = {"backends", "models", "assign"}
+
+
+@dataclasses.dataclass(frozen=True)
+class _BackendEntry:
+    kind: str
+    concurrency: int | None = None
+    timeout_s: float | None = None
+    url: str | None = None
+    replies: str | None = None
+
+
+@dataclasses.dataclass(frozen=True)
+class _ModelEntry:
+    backend: str
+    name: str
+    temperature: float | None = None
+    top_p: float | None = None
+    max_tokens: int | None = None
+
+
+def _or(value: Any, default: Any) -> Any:
+    return default if value is None else value
+
+
+def llm_config_from_mapping(data: object, where: str = "llm") -> LLMConfig:
+    llm = as_mapping(data, where)
+    values = values_for(LLMConfig, llm, where, nested=LLM_NESTED)
+    try:
+        base = LLMConfig(**values)
+    except ValueError as error:
+        raise SettingsError(f"{where}: {error}") from None
+    backends: dict[str, BackendSpec] = {}
+    raw_backends = as_mapping(llm.get("backends", {}), f"{where}.backends")
+    for key in sorted(raw_backends):
+        at = f"{where}.backends.{key}"
+        b = _BackendEntry(**values_for(_BackendEntry, as_mapping(raw_backends[key], at), at, set()))
+        url = _or(b.url, base.ollama_url if b.kind == "ollama" else None)
+        backends[key] = BackendSpec(
+            b.kind,
+            _or(b.concurrency, base.concurrency),
+            _or(b.timeout_s, base.timeout_s),
+            url,
+            b.replies,
+        )
+    models: dict[str, ModelSpec] = {}
+    raw_models = as_mapping(llm.get("models", {}), f"{where}.models")
+    for key in sorted(raw_models):
+        at = f"{where}.models.{key}"
+        m = _ModelEntry(**values_for(_ModelEntry, as_mapping(raw_models[key], at), at, set()))
+        sampling = Sampling(
+            float(_or(m.temperature, base.temperature)),
+            float(_or(m.top_p, base.top_p)),
+            int(_or(m.max_tokens, base.max_tokens)),
+        )
+        models[key] = ModelSpec(m.backend, m.name, sampling)
+    assign: dict[str, float] = {}
+    raw_assign = as_mapping(llm.get("assign", {}), f"{where}.assign")
+    for key in sorted(raw_assign):
+        ratio = raw_assign[key]
+        if isinstance(ratio, bool) or not isinstance(ratio, int | float):
+            raise SettingsError(f"{where}.assign.{key}: expected a number")
+        assign[key] = float(ratio)
+    try:
+        return dataclasses.replace(base, backends=backends, models=models, assign=assign)
+    except ValueError as error:
+        raise SettingsError(f"{where}: {error}") from None
+
+
+def llm_config_to_mapping(config: LLMConfig) -> dict[str, Any]:
+    """Every value of `config`, in the shape `llm_config_from_mapping` reads."""
+    out: dict[str, Any] = {
+        f.name: getattr(config, f.name)
+        for f in dataclasses.fields(LLMConfig)
+        if f.name not in LLM_NESTED
+    }
+    out["backends"] = {k: dataclasses.asdict(v) for k, v in sorted(config.backends.items())}
+    out["models"] = {
+        k: {"backend": m.backend, "name": m.name, **m.sampling.to_dict()}
+        for k, m in sorted(config.models.items())
+    }
+    out["assign"] = dict(sorted(config.assign.items()))
+    return out
+
+
+def load_llm_settings(path: Path) -> LLMConfig:
+    return llm_config_from_mapping(_read(path).get("llm", {}))

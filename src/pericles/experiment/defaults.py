@@ -10,7 +10,8 @@ from typing import Any
 from pericles.agents.config import AgentConfig
 from pericles.core.config import EngineConfig
 from pericles.core.content.loader import read_yaml
-from pericles.experiment.settings import load_agent_settings, load_settings
+from pericles.experiment.settings import load_agent_settings, load_llm_settings, load_settings
+from pericles.llm.config import LLMConfig
 
 DEFAULT_SETTINGS = Path(str(files("pericles.experiment").joinpath("default_settings.yaml")))
 
@@ -21,6 +22,10 @@ def default_config(**overrides: Any) -> EngineConfig:
 
 def default_agent_config(**overrides: Any) -> AgentConfig:
     return dataclasses.replace(load_agent_settings(DEFAULT_SETTINGS), **overrides)
+
+
+def default_llm_config(**overrides: Any) -> LLMConfig:
+    return dataclasses.replace(load_llm_settings(DEFAULT_SETTINGS), **overrides)
 
 
 def default_settings_mapping() -> dict[str, Any]:

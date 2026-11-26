@@ -57,6 +57,8 @@ class EngineConfig:
     family_events: tuple[str, ...] = ("born", "died", "couple_formed", "came_of_age")
     village_events: tuple[str, ...] = ("building_completed", "technology_learned")
     childhood_memory_limit: int = 20
+    # Experiment guard (ADR-0017 §9): a typo in map size must not hang map generation
+    max_map_tiles: int = 1_048_576
 
     def __post_init__(self) -> None:
         problems = _problems(self)
@@ -99,5 +101,6 @@ def _problems(c: EngineConfig) -> list[str]:
             "model_rule 'fixed' needs adult_model",
         ),
         (c.childhood_memory_limit >= 0, "childhood_memory_limit must be non-negative"),
+        (c.max_map_tiles >= 1, "max_map_tiles must be at least 1"),
     ]
     return [message for ok, message in checks if not ok]

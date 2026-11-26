@@ -1,4 +1,6 @@
 import copy
+import json
+import socket
 from pathlib import Path
 from typing import Any
 
@@ -7,6 +9,7 @@ import yaml
 
 from pericles.experiment.cli import main
 from pericles.experiment.rundir import RunDirectory
+from pericles.llm.gateway import BackendUnavailable
 
 pytestmark = pytest.mark.req("REQ-EXP-003")
 TINY: dict[str, Any] = {
@@ -129,3 +132,73 @@ def test_a_failed_resume_closes_the_run_directory(
     assert main(["resume", str(out)]) == 2
     assert "no usable snapshot" in capsys.readouterr().err
     assert closed == [out]
+
+
+def unused_port() -> int:
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        return int(sock.getsockname()[1])
+
+
+@pytest.mark.req("REQ-LLM-005")
+def test_a_bad_replay_source_fails_fast_and_leaves_no_run_directory(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """AC2: cache_from that is not a response cache exits 2 before the directory exists."""
+    data = copy.deepcopy(TINY)
+    data["llm"] = {"cache": "replay", "cache_from": "exp.yaml"}
+    path = write(tmp_path, data)
+    assert main(["run", str(path), "--out", str(tmp_path / "out")]) == 2
+    err = capsys.readouterr().err
+    assert "llm.cache_from" in err and "is not a response cache" in err
+    assert not (tmp_path / "out").exists()
+
+
+@pytest.mark.req("REQ-LLM-002")
+def test_a_missing_model_fails_fast_and_leaves_no_run_directory(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """AC1: the model check runs before the run directory is created."""
+    port = unused_port()
+    data = copy.deepcopy(TINY)
+    data["llm"] = {
+        "backends": {"local": {"kind": "ollama", "url": f"http://127.0.0.1:{port}"}},
+        "models": {"q": {"backend": "local", "name": "qwen3"}},
+        "assign": {"q": 1.0},
+    }
+    path = write(tmp_path, data)
+    assert main(["run", str(path), "--out", str(tmp_path / "out"), "--days", "1"]) == 2
+    assert f"cannot reach ollama at http://127.0.0.1:{port}" in capsys.readouterr().err
+    assert not (tmp_path / "out").exists()
+
+
+@pytest.mark.req("REQ-LLM-009")
+def test_backend_unavailable_exits_3_with_resume_advice(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """AC1: a run stopped by the backend says how to continue."""
+    import pericles.experiment.cli as cli
+
+    def stopped(session: object, days: int | None = None) -> object:
+        raise BackendUnavailable("ollama at http://x: 5 failures in a row; last: down")
+
+    monkeypatch.setattr(cli, "advance", stopped)
+    out = tmp_path / "out"
+    assert (
+        main(["run", str(write(tmp_path, TINY)), "--out", str(out), "--days", "1"])
+        == cli.EXIT_BACKEND
+        == 3
+    )
+    err = capsys.readouterr().err
+    assert "5 failures in a row" in err
+    assert f"pericles resume {out}" in err
+
+
+def test_meta_records_the_llm_modes(tmp_path: Path) -> None:
+    """meta.json says how the LLM was run, and that wait mode is reproducible."""
+    assert (
+        main(["run", str(write(tmp_path, TINY)), "--out", str(tmp_path / "out"), "--days", "1"])
+        == 0
+    )
+    meta = json.loads((tmp_path / "out" / "meta.json").read_text(encoding="utf-8"))
+    assert (meta["llm_mode"], meta["cache_mode"], meta["reproducible"]) == ("wait", "record", True)

@@ -10,8 +10,12 @@ from pathlib import Path
 from pericles.experiment.config import ExperimentError, load_experiment
 from pericles.experiment.launch import advance, reopen, start
 from pericles.experiment.rundir import RunDirectoryError
+from pericles.llm.backend import LLMSetupError
+from pericles.llm.cache import CacheMiss
+from pericles.llm.gateway import BackendUnavailable
 
 EXIT_ERROR = 2
+EXIT_BACKEND = 3
 
 
 def _days(text: str) -> int:
@@ -41,15 +45,26 @@ def main(argv: Sequence[str] | None = None) -> int:
             session = start(load_experiment(args.experiment), args.out)
         else:
             session = reopen(args.run_dir)
-    except (ExperimentError, RunDirectoryError) as error:
+    except (ExperimentError, RunDirectoryError, LLMSetupError) as error:
         print(f"pericles: {error}", file=sys.stderr)
         return EXIT_ERROR
     try:
         for path in session.run_dir.skipped:
             print(f"pericles: skipped unusable snapshot {path}", file=sys.stderr)
         state = advance(session, args.days)
+    except BackendUnavailable as error:
+        print(f"pericles: {error}", file=sys.stderr)
+        print(
+            f"pericles: the run stopped cleanly; continue it with "
+            f"`pericles resume {session.run_dir.path}`",
+            file=sys.stderr,
+        )
+        return EXIT_BACKEND
+    except CacheMiss as error:
+        print(f"pericles: {error}", file=sys.stderr)
+        return EXIT_ERROR
     finally:
-        session.run_dir.close()
+        session.close()
     per_day = session.experiment.engine.calendar.ticks_per_day
     if state.villagers:
         print(f"Day {state.tick // per_day}: {len(state.villagers)} villagers.")

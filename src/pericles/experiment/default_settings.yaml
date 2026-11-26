@@ -44,6 +44,7 @@ engine:
   family_events: [born, died, couple_formed, came_of_age]
   village_events: [building_completed, technology_learned]
   childhood_memory_limit: 20
+  max_map_tiles: 1048576
 
 # Scripted villagers (ADR-0016). Levels are need levels on the 0..critical scale.
 agents:
@@ -66,3 +67,22 @@ agents:
   idle_ticks: 15
   child_follow_radius: 4
   couples: true
+
+# LLM gateway (ADR-0017 §9). An experiment adds backends, models and assign.
+llm:
+  mode: wait                  # wait: the tick waits for every decision; live: fall back on failure
+  cache: record               # off | record | replay
+  cache_from: null            # replay: a run directory, its llm_cache directory, or responses.sqlite
+  backoff_base_s: 2.0
+  backoff_factor: 2.0
+  backoff_max_s: 60.0
+  max_backend_failures: 5
+  temperature: 0.7            # default sampling for models that do not set their own
+  top_p: 0.9
+  max_tokens: 512
+  concurrency: 1              # default calls in flight per backend
+  timeout_s: 300.0
+  ollama_url: http://localhost:11434
+  backends: {}
+  models: {}
+  assign: {}
