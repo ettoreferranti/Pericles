@@ -112,7 +112,9 @@ def test_replay_answers_from_the_cache_without_a_backend(tmp_path: Path) -> None
     assert silent.calls == []
     assert replayer.calls is not None
     assert [r.cached for r in replayer.calls.records()] == [True]
-    with pytest.raises(CacheMiss, match="no cached response for plan by bram at tick 3"):
+    with pytest.raises(
+        CacheMiss, match=r"no cached response for plan by bram at tick 3 \(model m\)"
+    ):
         replayer.complete(request("bram"))
     replayer.close()
 
@@ -163,7 +165,33 @@ def test_live_mode_returns_a_backend_error_at_once(tmp_path: Path) -> None:
     assert not failed.valid
     assert fine.value == Choice(pick=5)
     assert slept == []
+    assert g.calls is not None
+    rows = {r.villager: r for r in g.calls.records()}
+    assert (rows["ada"].valid, rows["ada"].error) == (False, "backend: fake backend: down")
+    assert rows["bram"].valid
+    assert len(g.cache) == 1
     g.close()
+
+
+@pytest.mark.req("REQ-LLM-009")
+def test_wait_mode_give_up_in_a_mixed_batch_keeps_the_good_results(tmp_path: Path) -> None:
+    """AC1: one villager's backend failure does not lose another's logged, cached reply."""
+    backend = FakeBackend(
+        [FakeRule((FakeError("down"),), villager="ada"), FakeRule(('{"pick": 5}',))]
+    )
+    g = gateway({"f": backend}, tmp_path)
+    with pytest.raises(BackendUnavailable):
+        g.complete_all([request("ada"), request("bram")])
+    assert g.calls is not None
+    rows = list(g.calls.records())
+    assert [(r.villager, r.valid) for r in rows] == [("ada", False)] * 4 + [("bram", True)]
+    g.close()
+    silent = FakeBackend()
+    replayer = gateway({"f": silent}, tmp_path, mode="replay")
+    result = replayer.complete(request("bram"))
+    assert result.cached and result.value == Choice(pick=5)
+    assert silent.calls == []
+    replayer.close()
 
 
 def test_failure_policy_delay_is_capped() -> None:
@@ -178,11 +206,12 @@ def test_results_follow_request_order_not_completion_order(tmp_path: Path) -> No
     forward = gateway({"f": FakeBackend(rules, concurrency=3)}, tmp_path, mode="off")
     backward = gateway({"f": FakeBackend(rules, concurrency=3)}, tmp_path, mode="off")
     ids = list("abcde")
-    one = {r.request.villager: r.value for r in forward.complete_all([request(v) for v in ids])}
-    two = {
-        r.request.villager: r.value
-        for r in backward.complete_all([request(v) for v in reversed(ids)])
-    }
+    first = forward.complete_all([request(v) for v in ids])
+    second = backward.complete_all([request(v) for v in reversed(ids)])
+    assert [r.request.villager for r in first] == ids
+    assert [r.request.villager for r in second] == list(reversed(ids))
+    one = {r.request.villager: r.value for r in first}
+    two = {r.request.villager: r.value for r in second}
     assert one == two == {v: Choice(pick=n) for n, v in enumerate(ids)}
     forward.close()
     backward.close()
@@ -229,6 +258,8 @@ def test_requests_are_batched_by_model_within_the_concurrency_limit(tmp_path: Pa
     assert [r.request.villager for r in results] == list("abcd")
     assert backend.order == ["model-x", "model-x", "model-y", "model-y"]
     assert backend.peak == 2
+    assert g.calls is not None
+    assert [r.villager for r in g.calls.records()] == list("abcd")
     g.close()
 
 
