@@ -38,6 +38,14 @@ def test_a_complete_config_is_valid_and_frozen() -> None:
         ({"cache": "always"}, "cache must be one of"),
         ({"cache": "replay"}, "cache 'replay' needs cache_from"),
         ({"backoff_base_s": 0.0}, "backoff_base_s must be positive"),
+        ({"backoff_base_s": math.nan}, "backoff_base_s must be positive"),
+        ({"backoff_factor": math.nan}, "backoff_factor must be at least 1"),
+        ({"backoff_max_s": math.nan}, "backoff_max_s must be at least backoff_base_s"),
+        ({"timeout_s": math.nan}, "timeout_s must be positive"),
+        (
+            {"backends": {"local": BackendSpec("fake", 1, math.nan)}},
+            "backends.local.timeout_s: must be positive",
+        ),
         ({"backoff_factor": 0.5}, "backoff_factor must be at least 1"),
         ({"backoff_max_s": 0.5}, "backoff_max_s must be at least backoff_base_s"),
         ({"max_backend_failures": 0}, "max_backend_failures must be at least 1"),
@@ -125,3 +133,12 @@ def test_error_messages_are_exact(changes: dict[str, object], message: str) -> N
     with pytest.raises(ValueError) as caught:
         config(**changes)
     assert str(caught.value) == message
+
+
+@pytest.mark.req("REQ-LLM-006")
+def test_model_keys_containing_must_keep_the_message_intact() -> None:
+    """AC1: the key is user-chosen text and is never rewritten."""
+    bad = replace(QWEN, sampling=Sampling(-1.0, 0.9, 5))
+    with pytest.raises(ValueError) as caught:
+        config(models={"x must": bad}, assign={"x must": 1.0})
+    assert str(caught.value) == "models.x must.temperature: must be finite and non-negative"

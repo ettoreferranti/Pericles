@@ -282,7 +282,14 @@ def test_llm_config_round_trips_through_its_mapping() -> None:
     """AC1: the resolved config can be read back."""
     llm = replace(
         default_llm_config(),
-        backends={"t": BackendSpec("fake", 1, 5.0)},
+        mode="live",
+        cache="replay",
+        cache_from="runs/a",
+        ollama_url="http://example:1",
+        backends={
+            "t": BackendSpec("fake", 2, 5.0, replies="r.yaml"),
+            "o": BackendSpec("ollama", 1, 7.0, url="http://example:2"),
+        },
         models={"m": ModelSpec("t", "echo", Sampling(0.1, 0.5, 8))},
         assign={"m": 1.0},
     )

@@ -23,14 +23,14 @@ class BackendSpec:
     replies: str | None = None
 
 
-def _sampling_errors(where: str, s: Sampling) -> list[str]:
+def _sampling_errors(where: str, sep: str, s: Sampling) -> list[str]:
     errors = []
     if not (math.isfinite(s.temperature) and s.temperature >= 0):
-        errors.append(f"{where}temperature must be finite and non-negative")
+        errors.append(f"{where}temperature{sep}must be finite and non-negative")
     if not 0 < s.top_p <= 1:
-        errors.append(f"{where}top_p must be in (0, 1]")
+        errors.append(f"{where}top_p{sep}must be in (0, 1]")
     if s.max_tokens < 1:
-        errors.append(f"{where}max_tokens must be at least 1")
+        errors.append(f"{where}max_tokens{sep}must be at least 1")
     return errors
 
 
@@ -68,18 +68,18 @@ class LLMConfig:
             errors.append(f"cache must be one of {CACHE_MODES}")
         if self.cache == "replay" and self.cache_from is None:
             errors.append("cache 'replay' needs cache_from")
-        if self.backoff_base_s <= 0:
+        if not (math.isfinite(self.backoff_base_s) and self.backoff_base_s > 0):
             errors.append("backoff_base_s must be positive")
-        if self.backoff_factor < 1:
+        if not (math.isfinite(self.backoff_factor) and self.backoff_factor >= 1):
             errors.append("backoff_factor must be at least 1")
-        if self.backoff_max_s < self.backoff_base_s:
+        if not (math.isfinite(self.backoff_max_s) and self.backoff_max_s >= self.backoff_base_s):
             errors.append("backoff_max_s must be at least backoff_base_s")
         if self.max_backend_failures < 1:
             errors.append("max_backend_failures must be at least 1")
-        errors += _sampling_errors("", Sampling(self.temperature, self.top_p, self.max_tokens))
+        errors += _sampling_errors("", " ", Sampling(self.temperature, self.top_p, self.max_tokens))
         if self.concurrency < 1:
             errors.append("concurrency must be at least 1")
-        if self.timeout_s <= 0:
+        if not (math.isfinite(self.timeout_s) and self.timeout_s > 0):
             errors.append("timeout_s must be positive")
         for key in sorted(self.backends):
             b = self.backends[key]
@@ -89,16 +89,13 @@ class LLMConfig:
                 errors.append(f"backends.{key}.url: an ollama backend needs a url")
             if b.concurrency < 1:
                 errors.append(f"backends.{key}.concurrency: must be at least 1")
-            if b.timeout_s <= 0:
+            if not (math.isfinite(b.timeout_s) and b.timeout_s > 0):
                 errors.append(f"backends.{key}.timeout_s: must be positive")
         for key in sorted(self.models):
             m = self.models[key]
             if m.backend not in self.backends:
                 errors.append(f"models.{key}.backend: unknown backend {m.backend!r}")
-            errors += [
-                e.replace(" must", ": must", 1)  # pragma: no mutate
-                for e in _sampling_errors(f"models.{key}.", m.sampling)
-            ]
+            errors += _sampling_errors(f"models.{key}.", ": ", m.sampling)
         for key in sorted(self.assign):
             if key not in self.models:
                 errors.append(f"assign.{key}: unknown model")
