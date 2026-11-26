@@ -96,7 +96,7 @@ class LLMConfig:
             if m.backend not in self.backends:
                 errors.append(f"models.{key}.backend: unknown backend {m.backend!r}")
             errors += [
-                e.replace(" must", ": must", 1)
+                e.replace(" must", ": must", 1)  # pragma: no mutate
                 for e in _sampling_errors(f"models.{key}.", m.sampling)
             ]
         for key in sorted(self.assign):

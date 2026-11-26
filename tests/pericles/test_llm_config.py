@@ -86,3 +86,42 @@ def test_invalid_configs_name_the_field(changes: dict[str, object], message: str
     """AC1: every part of the model configuration is checked."""
     with pytest.raises(ValueError, match=message):
         config(**changes)
+
+
+@pytest.mark.req("REQ-LLM-006")
+def test_boundary_values_are_valid() -> None:
+    """AC1: the limits themselves are allowed."""
+    made = config(
+        backoff_base_s=0.5,
+        backoff_factor=1.0,
+        backoff_max_s=0.5,
+        max_backend_failures=1,
+        top_p=1.0,
+        max_tokens=1,
+        concurrency=1,
+        timeout_s=0.5,
+        backends={"local": BackendSpec("fake", 1, 0.5)},
+    )
+    assert made.max_backend_failures == 1
+
+
+@pytest.mark.req("REQ-LLM-006")
+@pytest.mark.parametrize(
+    ("changes", "message"),
+    [
+        ({"cache": "replay"}, "cache 'replay' needs cache_from"),
+        ({"backoff_base_s": 0.0}, "backoff_base_s must be positive"),
+        ({"backoff_factor": 0.5}, "backoff_factor must be at least 1"),
+        ({"backoff_max_s": 0.5}, "backoff_max_s must be at least backoff_base_s"),
+        ({"max_backend_failures": 0}, "max_backend_failures must be at least 1"),
+        ({"concurrency": 0}, "concurrency must be at least 1"),
+        ({"timeout_s": 0.0}, "timeout_s must be positive"),
+        ({"max_tokens": 0}, "max_tokens must be at least 1"),
+        ({"top_p": 0.0}, "top_p must be in (0, 1]"),
+    ],
+)
+def test_error_messages_are_exact(changes: dict[str, object], message: str) -> None:
+    """AC1: the message is the bare field message, with no stray text."""
+    with pytest.raises(ValueError) as caught:
+        config(**changes)
+    assert str(caught.value) == message
