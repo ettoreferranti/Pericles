@@ -201,7 +201,17 @@ def test_failed_step_fires_step_failed_and_the_reason_reaches_the_next_prompt(
     )
     state, notes = step(controller, engine, state)
     failed = [d for k, d in notes if k == "plan_step" and d["status"] == "failed"]
-    assert failed and failed[0]["reason"] == "no iron_ore source within reach"
+    assert failed[:1] == [
+        {
+            "model": "m",
+            "actor": "ada",
+            "index": 0,
+            "action": "gather",
+            "target": "iron_ore",
+            "status": "failed",
+            "reason": "no iron_ore source within reach",
+        }
+    ]
     for _ in range(5):
         ada = state.villagers["ada"]  # the scripted fallback walks her off; make her due again
         ada.path, ada.activity = [], None
@@ -418,7 +428,8 @@ def test_records_of_dead_villagers_are_dropped(registry: Registry, make_world: M
         Villager("bo", "Bo", Coord(3, 3), model="m"),
     ]
     controller, engine, state, _backend = setup(registry, make_world, [REST], villagers=people)
-    state, _ = step(controller, engine, state)
+    state, notes = step(controller, engine, state)
+    assert [d["actor"] for k, d in notes if k == "plan_made"] == ["ada", "bo"]
     del state.villagers["bo"]
     controller.memory["ada"].idle_until = 0
     state, _ = step(controller, engine, state)
