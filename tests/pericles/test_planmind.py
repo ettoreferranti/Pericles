@@ -754,7 +754,9 @@ def test_a_rejected_eat_fails_the_step_with_the_rejection(
     tick(controller, state)
     controller.events()
     rejected = Event(state.tick, 0, "intent_rejected", {"actor": "ada", "reason": "not_hungry"})
+    assert mind_of(controller).records["ada"].progress.issued is True
     controller.observe(state, [rejected])
+    assert mind_of(controller).records["ada"].progress.issued is False
     controller.memory["ada"].idle_until = 0  # the controller idles untargeted failures
     tick(controller, state)
     steps = [d for k, d in controller.events() if k == "plan_step"]
