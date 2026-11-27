@@ -14,6 +14,7 @@ from pericles.agents.prompt import (
     fit,
     load_template,
     plan_messages,
+    render,
     template_paths,
 )
 from pericles.agents.view import NodeIndex, View
@@ -23,7 +24,7 @@ from pericles.core.context import Context
 from pericles.core.geometry import Coord
 from pericles.core.inventory import Inventory
 from pericles.core.nodes import Node
-from pericles.core.state import Villager, WorldState
+from pericles.core.state import Proposal, Villager, WorldState
 from pericles.experiment.defaults import default_agent_config, default_config
 
 MakeWorld = Callable[..., WorldState]
@@ -204,3 +205,36 @@ def test_crowded_village_is_trimmed_to_budget_farthest_first(
     assert "V00 (v00)" in small and "V29 (v29)" not in small  # v29 is the farthest
     for kept in ("## You", "## Needs", "## Your plan", "## Actions you can use"):
         assert kept in small
+
+
+def test_fit_keeps_everything_at_exactly_the_budget() -> None:
+    parts = [Section("You", ("abc",), ALWAYS), Section("Nearby", ("n1", "n2"), 2)]
+    exact = estimate_tokens(render(parts), 1.0)
+    assert fit(parts, budget_tokens=exact, chars_per_token=1.0, fixed_chars=0) == parts
+    assert fit(parts, budget_tokens=exact - 1, chars_per_token=1.0, fixed_chars=0) != parts
+
+
+@pytest.mark.req("REQ-AGT-002")
+def test_family_is_perceived_only_when_known(registry: Registry, make_world: MakeWorld) -> None:
+    """AC2: a relative's state is shown when in sight or sharing a home; else 'not in sight'."""
+    state = village(make_world)
+    ada = state.villagers["ada"]
+    ada.home, ada.partner, ada.parents = "h1", "bram", ("mom",)
+    state.villagers["bram"].partner = "ada"
+    state.villagers["bram"].needs = {"hunger": 90.0}
+    kid = Villager("kid", "Kid", Coord(35, 5), sex="male", parents=("ada",), home="h1")
+    kid.needs = {"hunger": 10.0}
+    mom = Villager("mom", "Mom", Coord(5, 35), sex="female", needs={"hunger": 99.0})
+    cara = Villager("cara", "Cara", Coord(6, 5), sex="female")
+    for other in (kid, mom, cara):
+        state.villagers[other.id] = other
+    state.proposals["cara"] = Proposal("ada", state.tick + 5)
+    state.proposals["zed"] = Proposal("ada", state.tick)  # lapsed
+    state.proposals["bram"] = Proposal("cara", state.tick + 5)  # not to Ada
+    text = prompt(registry, state)
+    assert "- partner Bram (bram): needs eat urgently" in text
+    assert "- child Kid (kid): fine" in text
+    assert "- parent Mom (mom): not in sight\n" in text
+    assert "Cara (cara) has asked you to be partners" in text
+    assert "Zed (zed) has asked" not in text
+    assert "Bram (bram) has asked" not in text
