@@ -10,12 +10,18 @@ from typing import Any
 from pericles.agents import rules
 from pericles.agents.config import ticks_for_hours
 from pericles.agents.plan import Step
-from pericles.agents.view import Decision, View
+from pericles.agents.view import CONSTRUCT, PLACE, Decision, View
+from pericles.core.buildings import COMMUNAL, Building, footprint, remaining_cost
 from pericles.core.intents import (
     AcceptCouple,
+    Construct,
+    Craft,
+    Deliver,
     Deposit,
     Eat,
+    PlaceBuilding,
     ProposeCouple,
+    Research,
     SetHome,
     Sleep,
     Take,
@@ -258,6 +264,128 @@ def _take(view: View, villager: Villager, step: Step, p: Progress) -> Outcome:
     return fail(f"no {item} in a store you may use")
 
 
+def workplace(view: View, villager: Villager, kind: str) -> Building | None:
+    """The nearest complete building of `kind`, by Manhattan distance then id."""
+    complete = [b for b in view.state.buildings.values() if b.kind == kind and b.complete]
+    return min(complete, key=lambda b: (villager.pos.manhattan(b.origin), b.id), default=None)
+
+
+def _missing(villager: Villager, bundle: Mapping[str, int]) -> str:
+    have = villager.inventory
+    return ", ".join(
+        f"{qty - have.count(item)} {item}"
+        for item, qty in sorted(bundle.items())
+        if have.count(item) < qty
+    )
+
+
+def _site(view: View, villager: Villager, kind: str, p: Progress) -> Building | Outcome:
+    """The site this step works on, or the outcome of finding or placing one."""
+    if p.site is not None:
+        site = view.state.buildings.get(p.site)
+        return site if site is not None else fail(f"the {kind} site is gone")
+    if p.origin is not None:
+        placed = next(
+            (b for b in view.sites() if b.kind == kind and (b.origin.x, b.origin.y) == p.origin),
+            None,
+        )
+        if placed is None:
+            return fail(f"could not place a {kind}")
+        p.site = placed.id
+        return placed
+    joined = next(
+        (b for b in view.sites() if b.kind == kind and not view.avoided(villager, b.id)), None
+    )
+    if joined is not None:
+        p.site = joined.id
+        return joined
+    origin = view.free_origin(kind, villager.pos)
+    if origin is None:
+        return fail(f"no free place for a {kind}")
+    size = view.ctx.registry.buildings[kind].footprint
+    move = view.go(villager, footprint(origin, size))
+    if move is not None:
+        return act(Decision(move, target=PLACE + kind))
+    p.origin = (origin.x, origin.y)
+    place = PlaceBuilding(villager.id, kind, origin, ownership=COMMUNAL)
+    return act(Decision(place, target=PLACE + kind))
+
+
+def _build(view: View, villager: Villager, step: Step, p: Progress) -> Outcome:
+    kind = str(step.target)
+    site = _site(view, villager, kind, p)
+    if isinstance(site, Outcome):
+        return site
+    if site.complete:
+        return DONE
+    remaining = remaining_cost(site, view.ctx.registry)
+    for item, qty in remaining.items():
+        have = villager.inventory.count(item)
+        if have:
+            move = view.go(villager, view.tiles(site))
+            if move is not None:
+                return act(Decision(move, target=site.id))
+            deliver = Deliver(villager.id, site.id, item, min(have, qty))
+            return act(Decision(deliver, target=site.id))
+    if remaining:
+        needs = ", ".join(f"{qty} {item}" for item, qty in remaining.items())
+        return fail(f"the {kind} still needs {needs}")
+    move = view.go(villager, view.tiles(site))
+    if move is not None:
+        return act(Decision(move, target=site.id, job=CONSTRUCT))
+    return act(Decision(Construct(villager.id, site.id), target=site.id, job=CONSTRUCT))
+
+
+def _work_at(
+    view: View,
+    villager: Villager,
+    kind: str,
+    make: Callable[[str], Decision],
+    p: Progress,
+) -> Outcome:
+    building = workplace(view, villager, kind)
+    if building is None:
+        return fail(f"no {kind} to work at")
+    move = view.go(villager, view.tiles(building))
+    if move is not None:
+        return act(Decision(move, target=building.id))
+    p.issued = True
+    return act(make(building.id))
+
+
+def _craft(view: View, villager: Villager, step: Step, p: Progress) -> Outcome:
+    recipe = view.ctx.registry.recipes[str(step.target)]
+    if p.issued and villager.activity is not None:
+        return CARRY_ON
+    if p.issued:
+        p.count, p.issued = p.count + 1, False
+    if p.count >= (step.qty if step.qty is not None else 1):
+        return DONE
+    if not villager.inventory.has(recipe.inputs):
+        return fail(f"{recipe.id} needs {_missing(villager, recipe.inputs)}")
+
+    def make(building: str) -> Decision:
+        return Decision(Craft(villager.id, recipe.id, building), target=building, job=recipe.id)
+
+    return _work_at(view, villager, recipe.building, make, p)
+
+
+def _research(view: View, villager: Villager, step: Step, p: Progress) -> Outcome:
+    tech = view.ctx.registry.technologies[str(step.target)]
+    known = view.state.village_knowledge if tech.scope == "village" else villager.knowledge
+    if tech.id in known:
+        return DONE
+    if p.issued and villager.activity is not None:
+        return CARRY_ON
+    if not villager.inventory.has(tech.cost):
+        return fail(f"{tech.id} needs {_missing(villager, tech.cost)}")
+
+    def make(building: str) -> Decision:
+        return Decision(Research(villager.id, tech.id, building), target=building)
+
+    return _work_at(view, villager, tech.building, make, p)
+
+
 HANDLERS: dict[str, Handler] = {
     "gather": _gather,
     "eat": _eat,
@@ -268,4 +396,7 @@ HANDLERS: dict[str, Handler] = {
     "court": _court,
     "store": _store,
     "take": _take,
+    "build": _build,
+    "craft": _craft,
+    "research": _research,
 }
