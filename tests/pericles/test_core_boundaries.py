@@ -158,6 +158,7 @@ AGENT_ALLOWED_NUMBERS: dict[tuple[str, str, float], str] = {
     ("prompt.py", "<module>", rank): "prompt section rank, an ordering and not a parameter"
     for rank in (2, 3, 4, 5, 99)
 }
+AGENT_ALLOWED_NUMBERS[("planmind.py", "<module>", 4)] = "request seed width in bytes, a format"
 AGENT_PARAMETER_MODULES = {"config.py"}
 
 
