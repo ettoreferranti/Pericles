@@ -695,3 +695,20 @@ def test_observe_keeps_only_failures_of_villagers_with_a_plan(
     )
     assert mind.records["ada"].rejected == "intent_rejected: intent_rejected"
     assert mind.records["bo"].rejected is None
+
+
+@pytest.mark.req("REQ-LLM-009")
+def test_live_mode_backend_errors_fall_back_for_every_villager_in_the_batch(
+    registry: Registry, make_world: MakeWorld
+) -> None:
+    """AC2: each villager whose request failed in live mode falls back, flagged."""
+    people = [
+        Villager("ada", "Ada", Coord(2, 2), model="m"),
+        Villager("bo", "Bo", Coord(3, 3), model="m"),
+    ]
+    controller, engine, state, _backend = setup(
+        registry, make_world, [FakeError("down")], mode="live", villagers=people
+    )
+    state, notes = step(controller, engine, state)
+    flagged = [(d["actor"], d["flagged"]) for k, d in notes if k == "mind_fallback"]
+    assert flagged == [("ada", True), ("bo", True)]
