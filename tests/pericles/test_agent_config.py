@@ -51,7 +51,7 @@ def test_plan_mind_defaults() -> None:
     c = AgentConfig()
     assert (c.perception_radius, c.replan_hours, c.fallback_hours) == (12, 6.0, 1.0)
     assert (c.max_retries, c.max_plan_steps, c.prompt_budget_tokens) == (2, 6, 2000)
-    assert (c.chars_per_token, c.plan_template, c.drawn_traits) == (4.0, "plan.v1", 0)
+    assert (c.chars_per_token, c.plan_template, c.drawn_traits) == (4.0, "plan.v2", 0)
     assert TRIGGERS == ("idle", "step_completed", "step_failed", "need", "periodic")
     assert c.triggers == ("idle", "step_failed", "need", "periodic")
     assert c.steering_phrases == STEERING

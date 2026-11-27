@@ -3,7 +3,15 @@ from collections.abc import Callable
 import pytest
 
 from pericles.agents.config import AgentConfig
-from pericles.agents.plan import ACTIONS, Catalog, Plan, Step, catalog_for, check_plan
+from pericles.agents.plan import (
+    ACTIONS,
+    Catalog,
+    Plan,
+    Step,
+    catalog_for,
+    check_plan,
+    without_ignored_targets,
+)
 from pericles.agents.view import NodeIndex, View
 from pericles.core.content.registry import Registry
 from pericles.core.context import Context
@@ -107,9 +115,7 @@ def test_check_plan_rejects_targets_outside_the_catalog() -> None:
     assert check_plan(plan(Step(action="gather")), catalog, 6) == (
         "steps[0].target: gather needs a target; valid: berries, wood"
     )
-    assert check_plan(plan(Step(action="sleep", target="bed")), catalog, 6) == (
-        "steps[0].target: sleep takes no target"
-    )
+    assert check_plan(plan(Step(action="sleep", target="bed")), catalog, 6) is None
     assert check_plan(plan(Step(action="build", target="house")), catalog, 6) == (
         "steps[0].target: 'house' is not a valid target for build; valid: none right now"
     )
@@ -152,7 +158,7 @@ def test_gather_targets_are_content_level_not_perception_limited(
 @pytest.mark.req("REQ-AGT-003")
 def test_store_and_eat_accept_items_nobody_holds(registry: Registry, make_world: MakeWorld) -> None:
     """AC2: store and eat targets are content-level, so plans can chain gather, store, eat."""
-    ada = Villager("ada", "Ada", Coord(1, 1), sex="female")
+    ada = Villager("ada", "Ada", Coord(1, 1), sex="female", needs={"hunger": 50.0})
     state = make_world(ROWS, [ada])
     catalog = catalog_for(view_of(registry, state), ada)
     assert ada.inventory.count("wood") == 0 and ada.inventory.count("meat") == 0
@@ -172,3 +178,48 @@ def test_gather_usage_does_not_claim_proximity() -> None:
     catalog = Catalog({a: () for a in ACTIONS} | {"gather": ("wood",)})
     gather = next(line for line in catalog.lines() if line.startswith("- gather"))
     assert "nearby" not in gather
+
+
+@pytest.mark.req("REQ-AGT-003")
+def test_targets_on_actions_that_take_none_are_ignored_and_dropped() -> None:
+    """AC2: `sleep house b0` means sleep; the plan is valid and the stray target is dropped
+    (a live run lost 129 plans and their retries to this)."""
+    stray = Plan(
+        goal="g",
+        steps=(
+            Step(action="sleep", target="house b0"),
+            Step(action="go_home", target="home"),
+            Step(action="rest", target="here", qty=2),
+            Step(action="move_in", target="b1"),
+            Step(action="gather", target="wood", qty=3),
+        ),
+        reason="r",
+    )
+    catalog = Catalog({a: () for a in ACTIONS} | {"gather": ("wood",)})
+    assert check_plan(stray, catalog, 6) is None
+    clean = without_ignored_targets(stray)
+    assert [s.target for s in clean.steps] == [None, None, None, None, "wood"]
+    assert [s.qty for s in clean.steps] == [None, None, 2, None, 3]
+    assert (clean.goal, clean.reason) == ("g", "r")
+
+
+@pytest.mark.req("REQ-AGT-003")
+def test_eat_is_not_offered_below_the_eating_level(
+    registry: Registry, make_world: MakeWorld
+) -> None:
+    """AC2: below `act_at["eat"]` the catalog leaves `eat` out and a plan naming it is invalid,
+    with the reason (a live run failed 200 eat steps as "not hungry")."""
+    full = Villager("ada", "Ada", Coord(1, 1), sex="female", needs={"hunger": 49.0})
+    hungry = Villager("bob", "Bob", Coord(2, 1), sex="male", needs={"hunger": 50.0})
+    state = make_world(ROWS, [full, hungry])
+    view = view_of(registry, state)
+    eat = Plan(goal="g", steps=(Step(action="rest"), Step(action="eat")), reason="r")
+    not_hungry = catalog_for(view, full)
+    assert not any(line.startswith("- eat") for line in not_hungry.lines())
+    assert check_plan(eat, not_hungry, 6) == (
+        "steps[1].action: eat is not possible now: you are not hungry enough "
+        "(eating works from 50, you are at 49)"
+    )
+    can_eat = catalog_for(view, hungry)
+    assert any(line.startswith("- eat") for line in can_eat.lines())
+    assert check_plan(eat, can_eat, 6) is None

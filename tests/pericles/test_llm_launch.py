@@ -284,7 +284,7 @@ def test_villagers_with_a_model_plan_through_the_gateway(tmp_path: Path) -> None
     assert made[0].data["triggers"] == ["idle"] and made[0].data["model"] == "m"
     assert {e.data["actor"] for e in made} == {"a", "b"}
     assert not [e for e in events if e.kind in ("plan_invalid", "mind_fallback")]
-    assert rows and all(r.template == "plan.v1" and r.kind == "plan" for r in rows)
+    assert rows and all(r.template == "plan.v2" and r.kind == "plan" for r in rows)
     assert all(r.valid for r in rows)
 
 
@@ -295,7 +295,7 @@ def test_template_version_is_in_meta_json(tmp_path: Path) -> None:
     session = start(load_experiment(experiment_file(tmp_path, GOOD)), out)
     session.close()
     meta = json.loads((out / "meta.json").read_text(encoding="utf-8"))
-    assert meta["templates"] == {"plan": "plan.v1"}
+    assert meta["templates"] == {"plan": "plan.v2"}
     assert meta["llm_mode"] == "wait"  # the gateway's run metadata stays
 
 

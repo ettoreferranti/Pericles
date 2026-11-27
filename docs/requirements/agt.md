@@ -8,7 +8,7 @@ Must · M2 · Implemented
 
 ### REQ-AGT-002: Prompt builder
 Must · M2 · Accepted
-- AC1: The prompt contains identity and traits, needs, inventory and property, the critical state of family members when known, perception (including who could witness them), known recipes and costs, the active laws the villager knows and their penalties, retrieved memories (including hearsay), opinions of the villagers involved, current goals and plan, active sanctions against the villager, and recent board posts.
+- AC1: The prompt contains identity and traits, needs, inventory and property, the critical state of family members when known, perception, known recipes and costs, retrieved memories (including hearsay), opinions of the villagers involved, and current goals and plan. The society sections (laws, sanctions, witnesses, board) are REQ-AGT-011.
 - AC2: Perception is limited to `perception_radius` plus the village store summary. No hidden state is leaked.
 - AC3: The prompt stays under a configured token budget (default 2000) by trimming lower-priority sections in a documented order.
 - AC4: Prompts are deterministic for a given state (same state → same prompt bytes).
@@ -56,3 +56,8 @@ Must · M2 · Implemented
 - AC1: The system prompt and templates neither instruct villagers to obey laws nor invite them to break them. Laws are presented as facts about the village ("The village has decided: …"), together with their known penalties.
 - AC2: Prompt templates are versioned files. The template version is recorded in `meta.json` and in each LLM call event.
 - AC3: A test asserts that templates contain none of a configurable list of steering phrases (e.g. "you must obey", "you may break").
+
+### REQ-AGT-011: Society in the prompt
+Must · M3 · Accepted
+- AC1: The prompt contains the active laws the villager knows and their known penalties, active sanctions against the villager, recent board posts, and, within perception, who could witness the villager.
+- AC2: These sections follow REQ-AGT-002 AC2–AC4: limited to what the villager perceives or knows, inside the token budget in a documented trimming order, and deterministic.

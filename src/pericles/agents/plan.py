@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import typing
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -35,7 +35,7 @@ USAGE = {
     "gather": "gather <item> [qty]: collect a raw item from the land",
     "eat": "eat [food]: eat food you carry, or fetch it from a store you may use",
     "sleep": "sleep: go home if you have one, and sleep until rested",
-    "rest": "rest [hours]: stay where you are",
+    "rest": "rest [hours]: stay where you are; it relieves no need",
     "go_home": "go_home: walk home",
     "move_in": "move_in: take a bed in a house with room",
     "court": "court <villager>: ask to become partners, or accept their proposal",
@@ -65,13 +65,18 @@ class Plan(BaseModel):
 
 @dataclass(frozen=True)
 class Catalog:
-    """Each action's valid targets for one villager now; `NO_TARGET` actions take none."""
+    """Each action's valid targets for one villager now; `NO_TARGET` actions take none.
+    `unavailable` maps actions the villager cannot do now to the reason (left out of the
+    prompt; a plan naming one is invalid, and the retry gives the reason)."""
 
     targets: Mapping[str, tuple[str, ...]]
+    unavailable: Mapping[str, str] = field(default_factory=dict)
 
     def lines(self) -> list[str]:
         out = []
         for action in ACTIONS:
+            if action in self.unavailable:
+                continue
             valid = self.targets.get(action, ())
             needs_target = action not in NO_TARGET and action not in OPTIONAL_TARGET
             if needs_target and not valid:
@@ -133,7 +138,13 @@ def catalog_for(view: View, villager: Villager) -> Catalog:
         "craft": tuple(sorted(r for r in registry.recipes if ctx.available(state, villager, r))),
         "research": tuple(researchable),
     }
-    return Catalog(targets)
+    unavailable = {}
+    hunger, eat_at = view.level(villager, "eat"), view.config.act_at["eat"]
+    if hunger < eat_at:  # the executor refuses to eat below act_at (ADR-0018 §3)
+        unavailable["eat"] = (
+            f"you are not hungry enough (eating works from {eat_at:.0f}, you are at {hunger:.0f})"
+        )
+    return Catalog(targets, unavailable)
 
 
 def _listing(valid: tuple[str, ...]) -> str:
@@ -146,10 +157,11 @@ def check_plan(plan: Plan, catalog: Catalog, max_steps: int) -> str | None:
         return f"steps: at most {max_steps} steps, got {len(plan.steps)}"
     for i, step in enumerate(plan.steps):
         where = f"steps[{i}].target"
+        if step.action in catalog.unavailable:
+            reason = catalog.unavailable[step.action]
+            return f"steps[{i}].action: {step.action} is not possible now: {reason}"
         valid = catalog.targets.get(step.action, ())
-        if step.action in NO_TARGET:
-            if step.target is not None:
-                return f"{where}: {step.action} takes no target"
+        if step.action in NO_TARGET:  # a stray target is ignored (`without_ignored_targets`)
             continue
         if step.target is None:
             if step.action in OPTIONAL_TARGET:
@@ -161,3 +173,11 @@ def check_plan(plan: Plan, catalog: Catalog, max_steps: int) -> str | None:
                 f"valid: {_listing(valid)}"
             )
     return None
+
+
+def without_ignored_targets(plan: Plan) -> Plan:
+    """`plan` with the targets of `NO_TARGET` steps dropped: `sleep house b0` means sleep."""
+    steps = tuple(
+        s.model_copy(update={"target": None}) if s.action in NO_TARGET else s for s in plan.steps
+    )
+    return plan.model_copy(update={"steps": steps})
