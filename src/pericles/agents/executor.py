@@ -357,14 +357,18 @@ def _craft(view: View, villager: Villager, step: Step, p: Progress) -> Outcome:
     recipe = view.ctx.registry.recipes[str(step.target)]
     if p.issued and villager.activity is not None:
         return CARRY_ON
+    output = min(recipe.outputs)  # a rejected or interrupted craft leaves this count unchanged
     if p.issued:
-        p.count, p.issued = p.count + 1, False
+        if villager.inventory.count(output) > p.base:
+            p.count += 1
+        p.issued = False
     if p.count >= (step.qty if step.qty is not None else 1):
         return DONE
     if not villager.inventory.has(recipe.inputs):
         return fail(f"{recipe.id} needs {_missing(villager, recipe.inputs)}")
 
     def make(building: str) -> Decision:
+        p.base = villager.inventory.count(output)
         return Decision(Craft(villager.id, recipe.id, building), target=building, job=recipe.id)
 
     return _work_at(view, villager, recipe.building, make, p)
