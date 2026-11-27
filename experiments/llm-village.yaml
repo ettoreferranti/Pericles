@@ -1,0 +1,38 @@
+# An LLM village: six adults planned by a local Ollama model, two scripted (ADR-0018).
+# Needs `ollama serve` and `ollama pull llama3.1:8b`. Replay a recorded run with
+# llm: {cache: replay, cache_from: ../runs/<name>} (paths resolve against this file).
+seed: 1
+packs: [base]
+map:
+  width: 64
+  height: 64
+  bands:
+    - {terrain: water, share: 0.12}
+    - {terrain: fertile_soil, share: 0.18}
+    - {terrain: grass, share: 0.35}
+    - {terrain: forest, share: 0.25}
+    - {terrain: rock, share: 0.10}
+  veins:
+    - {terrain: iron_vein, share: 0.02, host: rock}
+    - {terrain: gold_vein, share: 0.005, host: rock}
+  start_terrain: grass
+  start_radius: 6
+population:
+  - {id: ada, name: Ada, sex: female, age_days: 210, model: llama, skills: {foraging: 20.0}, inventory: {berries: 4}}
+  - {id: bram, name: Bram, sex: male, age_days: 260, model: llama, skills: {woodcutting: 25.0}, inventory: {berries: 4}}
+  - {id: cora, name: Cora, sex: female, age_days: 180, model: llama, skills: {masonry: 20.0}, inventory: {berries: 4}}
+  - {id: dov, name: Dov, sex: male, age_days: 300, model: llama, skills: {woodcutting: 15.0, masonry: 10.0}, inventory: {berries: 4}}
+  - {id: elin, name: Elin, sex: female, age_days: 150, model: llama, skills: {fishing: 20.0}, inventory: {berries: 4}}
+  - {id: fenn, name: Fenn, sex: male, age_days: 140, model: llama, skills: {hunting: 20.0}, inventory: {berries: 4}}
+  - {id: greta, name: Greta, sex: female, age_days: 380, traits: [fearful], skills: {foraging: 30.0}, inventory: {berries: 4}}
+  - {id: hugo, name: Hugo, sex: male, age_days: 220, traits: [], skills: {masonry: 25.0}, inventory: {berries: 4}}
+agents:
+  drawn_traits: 2
+llm:
+  backends:
+    local: {kind: ollama}
+  models:
+    llama: {backend: local, name: "llama3.1:8b"}
+run:
+  days: 3
+  snapshot_every_days: 1

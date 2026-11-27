@@ -17,6 +17,7 @@ from pericles.experiment.defaults import default_agent_config, default_config
 
 pytestmark = pytest.mark.req("REQ-EXP-001")
 BASELINE = Path(__file__).parents[2] / "experiments" / "baseline.yaml"
+LLM_VILLAGE = Path(__file__).parents[2] / "experiments" / "llm-village.yaml"
 MINIMAL: dict[str, Any] = {
     "seed": 3,
     "map": {
@@ -362,3 +363,49 @@ def test_model_errors_name_the_field(tmp_path: Path, path: str, value: object, p
     """AC1: an undefined model or backend is a field error."""
     with pytest.raises(ExperimentError, match=f"^{prefix}"):
         experiment_from_mapping(changed(path, value), tmp_path)
+
+
+@pytest.mark.req("REQ-AGT-009")
+def test_drawn_traits_are_recorded_in_the_resolved_population(tmp_path: Path) -> None:
+    """AC1: with agents.drawn_traits: 2, entries without traits get two, pinned in resolved."""
+    data = changed("agents", {"drawn_traits": 2})
+    data["population"][1]["traits"] = ["greedy"]
+    experiment = experiment_from_mapping(data, tmp_path)
+    drawn = experiment.resolved["population"][0]["traits"]
+    assert len(drawn) == 2 and len(set(drawn)) == 2
+    assert set(drawn) <= set(experiment.registry.traits)
+    assert experiment.population[0].traits == tuple(drawn)
+    assert experiment.resolved["population"][1]["traits"] == ["greedy"]
+    assert experiment_from_mapping(experiment.resolved, tmp_path).resolved == experiment.resolved
+    plain = experiment_from_mapping(MINIMAL, tmp_path)
+    assert "traits" not in plain.resolved["population"][0]
+    assert build_world(plain).villagers["a"].traits == ()
+
+
+def test_too_many_drawn_traits_is_an_experiment_error(tmp_path: Path) -> None:
+    with pytest.raises(ExperimentError, match=r"^agents\.drawn_traits: 99 is more than the"):
+        experiment_from_mapping(changed("agents", {"drawn_traits": 99}), tmp_path)
+
+
+def test_unknown_plan_template_is_an_experiment_error(tmp_path: Path) -> None:
+    with pytest.raises(
+        ExperimentError, match=r"^agents\.plan_template: prompt template 'plan\.v9'"
+    ):
+        experiment_from_mapping(changed("agents", {"plan_template": "plan.v9"}), tmp_path)
+
+
+@pytest.mark.req("REQ-AGT-009")
+def test_the_llm_village_example_loads() -> None:
+    """AC1: the example LLM experiment loads; six model villagers get two drawn traits each."""
+    experiment = load_experiment(LLM_VILLAGE)
+    assert len(experiment.population) == 8
+    by_id = {spec.id: spec for spec in experiment.population}
+    planned = [s for s in experiment.population if s.model == "llama"]
+    assert len(planned) == 6
+    assert all(s.traits is not None and len(s.traits) == 2 for s in planned)
+    assert by_id["greta"].traits == ("fearful",) and by_id["greta"].model is None
+    assert by_id["hugo"].traits == () and by_id["hugo"].model is None
+    assert experiment.agents.drawn_traits == 2
+    assert experiment.llm.backends["local"].kind == "ollama"
+    assert experiment.llm.backends["local"].url == "http://localhost:11434"
+    assert experiment.llm.models["llama"].name == "llama3.1:8b"
