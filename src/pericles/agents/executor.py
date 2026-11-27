@@ -27,9 +27,10 @@ from pericles.core.intents import (
     Take,
     Wait,
 )
-from pericles.core.inventory import capacity_for
+from pericles.core.inventory import bundle_weight, capacity_for, fits
 from pericles.core.life import SLEEP
 from pericles.core.state import Villager
+from pericles.core.work import WORKPLACE_KINDS
 
 EAT = "eat"
 COUNTED = ("gather", "take", "store")  # steps measured against the held count at their start
@@ -133,6 +134,8 @@ def _eat(view: View, villager: Villager, step: Step, p: Progress) -> Outcome:
     foods = (step.target,) if step.target is not None else view.foods
     items = view.ctx.registry.items
     level = view.level(villager, EAT)
+    if level < view.config.act_at[EAT]:
+        return fail("not hungry")  # eating now would waste food (the engine eats at least one)
     for food in foods:
         have = villager.inventory.count(food)
         if have:
@@ -159,7 +162,7 @@ def _sleep(view: View, villager: Villager, step: Step, p: Progress) -> Outcome:
 
 
 def _rest(view: View, villager: Villager, step: Step, p: Progress) -> Outcome:
-    hours = step.qty if step.qty is not None else 1
+    hours = step.qty if step.qty is not None else view.config.rest_hours
     if view.tick >= p.start + ticks_for_hours(view.ctx.config.calendar.tick_minutes, hours):
         return DONE
     return act(Decision(Wait(villager.id)))
@@ -264,10 +267,27 @@ def _take(view: View, villager: Villager, step: Step, p: Progress) -> Outcome:
     return fail(f"no {item} in a store you may use")
 
 
+def _working(view: View, building: Building) -> int:
+    """Villagers working at `building`, counted as the engine counts them (core.work)."""
+    return sum(
+        1
+        for v in view.state.villagers.values()
+        if v.activity is not None
+        and v.activity.kind in WORKPLACE_KINDS
+        and v.activity.target == building.id
+    )
+
+
 def workplace(view: View, villager: Villager, kind: str) -> Building | None:
-    """The nearest complete building of `kind`, by Manhattan distance then id."""
-    complete = [b for b in view.state.buildings.values() if b.kind == kind and b.complete]
-    return min(complete, key=lambda b: (villager.pos.manhattan(b.origin), b.id), default=None)
+    """The nearest complete building of `kind` with a free worker slot, by Manhattan distance
+    then id. The engine rejects work at a full one (building_full)."""
+    slots = view.ctx.registry.buildings[kind].workers
+    free = [
+        b
+        for b in view.state.buildings.values()
+        if b.kind == kind and b.complete and _working(view, b) < slots
+    ]
+    return min(free, key=lambda b: (villager.pos.manhattan(b.origin), b.id), default=None)
 
 
 def _missing(villager: Villager, bundle: Mapping[str, int]) -> str:
@@ -366,6 +386,10 @@ def _craft(view: View, villager: Villager, step: Step, p: Progress) -> Outcome:
         return DONE
     if not villager.inventory.has(recipe.inputs):
         return fail(f"{recipe.id} needs {_missing(villager, recipe.inputs)}")
+    registry = view.ctx.registry
+    freed = bundle_weight(registry, recipe.inputs)
+    if not fits(registry, villager.inventory, recipe.outputs, view.ctx.config.carry_limit, freed):
+        return fail(f"no room to carry the {recipe.id} output")  # the engine's carry_limit
 
     def make(building: str) -> Decision:
         p.base = villager.inventory.count(output)

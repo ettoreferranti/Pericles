@@ -62,6 +62,8 @@ class AgentConfig:
     perception_radius: int = 12
     replan_hours: float = 6.0
     fallback_hours: float = 1.0
+    stall_hours: float = 1.0  # a plan failing this soon with no step done falls back (§5)
+    rest_hours: float = 1.0  # how long a `rest` step without hours lasts
     max_retries: int = 2
     max_plan_steps: int = 6
     prompt_budget_tokens: int = 2000
@@ -91,6 +93,8 @@ def _problems(c: AgentConfig) -> list[str]:
         c.skill_weight,
         c.replan_hours,
         c.fallback_hours,
+        c.stall_hours,
+        c.rest_hours,
         c.chars_per_token,
     ]
     if not all(math.isfinite(v) for v in reals):
@@ -123,7 +127,16 @@ def _problems(c: AgentConfig) -> list[str]:
         (all(v > 0 for v in positive), "cells, tick counts and builder limits must be positive"),
         (bool(c.house_building and c.store_building), "building ids must be non-empty"),
         (
-            c.replan_hours > 0 and c.fallback_hours > 0 and c.chars_per_token > 0,
+            all(
+                v > 0
+                for v in (
+                    c.replan_hours,
+                    c.fallback_hours,
+                    c.stall_hours,
+                    c.rest_hours,
+                    c.chars_per_token,
+                )
+            ),
             "hours and chars_per_token must be positive",
         ),
         (

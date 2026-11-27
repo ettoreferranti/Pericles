@@ -71,6 +71,8 @@ agents:
   perception_radius: 12
   replan_hours: 6.0
   fallback_hours: 1.0
+  stall_hours: 1.0
+  rest_hours: 1.0
   max_retries: 2
   max_plan_steps: 6
   prompt_budget_tokens: 2000

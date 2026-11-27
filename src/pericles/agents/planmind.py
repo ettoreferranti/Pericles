@@ -21,6 +21,7 @@ from pericles.llm.types import Message, Request, Result
 Complete = Callable[[Sequence[Request]], list[Result]]
 IDLE, STEP_COMPLETED, STEP_FAILED, NEED, PERIODIC = TRIGGERS
 KIND = "plan"
+STALLED = "the plan made no progress"
 SEED_BYTES = 4  # request seeds are unsigned 32-bit integers
 
 
@@ -111,8 +112,14 @@ class PlanMind:
             record.decision = None
             if view.tick < record.fallback_until:
                 continue
+            had_plan = record.plan is not None
             self._run(view, villager, record)
             fired = self._fired(view, villager, record)
+            if fired and had_plan and self._stalled(view, record):
+                # Asking again would likely get the same plan and the same failure every
+                # tick or two (ADR-0018 §5). `pending` keeps step_failed for the next ask.
+                self._fall_back(view, villager.id, record, STALLED, flagged=False)
+                continue
             if fired:
                 asks[villager.id] = fired
         if asks:
@@ -214,6 +221,15 @@ class PlanMind:
                 continue
             record.decision = outcome.decision
             return
+
+    def _stalled(self, view: View, record: Record) -> bool:
+        """A step failed, none completed, and the plan is younger than stall_hours."""
+        stall = ticks_for_hours(view.ctx.config.calendar.tick_minutes, self.config.stall_hours)
+        return (
+            STEP_FAILED in record.pending
+            and STEP_COMPLETED not in record.pending
+            and view.tick - record.planned_tick < stall
+        )
 
     def _fired(self, view: View, villager: Villager, record: Record) -> tuple[str, ...]:
         fired = set(record.pending)

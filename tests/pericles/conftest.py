@@ -233,8 +233,12 @@ def rows() -> list[str]:
 
 @pytest.fixture
 def view_of(registry: Registry) -> Callable[..., View]:
-    def build(state: WorldState, memory: Mapping[str, Memory] | None = None) -> View:
-        config = AgentConfig()
+    def build(
+        state: WorldState,
+        memory: Mapping[str, Memory] | None = None,
+        config: AgentConfig | None = None,
+    ) -> View:
+        config = AgentConfig() if config is None else config
         ctx = Context.build(registry, default_config())
         index = NodeIndex(state.nodes.values(), config.index_cell)
         return View(ctx, state, config, index, {} if memory is None else dict(memory))
@@ -250,10 +254,11 @@ def run(view_of: Callable[..., View]) -> Callable[..., tuple[Outcome, Progress]]
         step: Step,
         p: Progress | None = None,
         memory: Mapping[str, Memory] | None = None,
+        config: AgentConfig | None = None,
     ) -> tuple[Outcome, Progress]:
         villager = state.villagers[vid]
         progress = p if p is not None else begin(state.tick, villager, step)
-        return advance(view_of(state, memory), villager, step, progress), progress
+        return advance(view_of(state, memory, config), villager, step, progress), progress
 
     return go
 

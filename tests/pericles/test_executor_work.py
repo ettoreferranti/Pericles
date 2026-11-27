@@ -11,6 +11,7 @@ from pericles.core.geometry import Coord
 from pericles.core.intents import Construct, Craft, Deliver, MoveTo, PlaceBuilding, Research
 from pericles.core.inventory import Inventory
 from pericles.core.state import Activity, Villager, WorldState
+from pericles.experiment.defaults import default_config
 
 MakeWorld = Callable[..., WorldState]
 Runner = Callable[..., tuple[Outcome, Progress]]
@@ -145,6 +146,69 @@ def test_workplace_is_the_nearest_complete_building_of_its_kind(
     view = view_of(state)
     assert workplace(view, ada, "smithy").id == "s1"  # type: ignore[union-attr]
     assert workplace(view, ada, "mint") is None
+
+
+def test_workplace_skips_buildings_with_no_free_worker_slot(
+    registry: Registry, make_world: MakeWorld, view_of: ViewOf, rows: list[str]
+) -> None:
+    """Work at a full building is rejected (building_full); the executor skips such buildings."""
+    assert registry.buildings["lumber_camp"].workers == 2
+    ada = Villager("ada", "Ada", Coord(2, 2))
+    bo, cy, di = (Villager(v, v.title(), Coord(4, 3)) for v in ("bo", "cy", "di"))
+    state = make_world(rows, [ada, bo, cy, di])
+    owner = Ownership("communal")
+    state.buildings["l1"] = Building("l1", "lumber_camp", Coord(3, 2), owner, complete=True)
+    state.buildings["l2"] = Building("l2", "lumber_camp", Coord(9, 9), owner, complete=True)
+
+    def nearest() -> str | None:
+        found = workplace(view_of(state), ada, "lumber_camp")
+        return None if found is None else found.id
+
+    bo.activity = Activity("recipe", "saw_planks", "l1", 30.0, 0.0, 1.0)
+    cy.activity = Activity("sleep", "sleep", "l1", 30.0, 0.0, 1.0)  # not work: no slot taken
+    assert nearest() == "l1"
+    cy.activity = Activity("action", "chop", "l1", 30.0, 0.0, 1.0)
+    assert nearest() == "l2"
+    di.activity = Activity("research", "x", "l2", 30.0, 0.0, 1.0)
+    assert nearest() == "l2"
+    ada.activity = Activity("recipe", "saw_planks", "l2", 30.0, 0.0, 1.0)
+    assert nearest() is None
+
+
+@pytest.mark.req("REQ-AGT-004")
+def test_craft_at_a_full_workplace_fails_at_once(
+    registry: Registry, make_world: MakeWorld, rows: list[str], run: Runner
+) -> None:
+    """AC2: with every workplace full the step fails now instead of sending a doomed Craft."""
+    ada = Villager("ada", "Ada", Coord(2, 2), inventory=Inventory({"wood": 2}))
+    workers = registry.buildings["lumber_camp"].workers
+    others = [Villager(f"w{i}", f"W{i}", Coord(4, 3)) for i in range(workers)]
+    state = make_world(rows, [ada, *others])
+    owner = Ownership("communal")
+    state.buildings["l1"] = Building("l1", "lumber_camp", Coord(3, 2), owner, complete=True)
+    for w in others:
+        w.activity = Activity("recipe", "saw_planks", "l1", 30.0, 0.0, 1.0)
+    out, progress = run(state, "ada", Step(action="craft", target="saw_planks"))
+    assert out.failed == "no lumber_camp to work at" and progress.issued is False
+
+
+@pytest.mark.req("REQ-AGT-004")
+def test_craft_fails_when_its_output_will_not_fit(
+    registry: Registry, make_world: MakeWorld, rows: list[str], run: Runner
+) -> None:
+    """AC2: outputs that will not fit once the inputs are used fail the step (carry_limit)."""
+    limit = default_config().carry_limit
+    full = int(limit // registry.items["wood"].weight)  # saw_planks weighs the same in and out
+    ada = Villager("ada", "Ada", Coord(2, 2), inventory=Inventory({"wood": full}))
+    state = make_world(rows, [ada])
+    owner = Ownership("communal")
+    state.buildings["l1"] = Building("l1", "lumber_camp", Coord(3, 2), owner, complete=True)
+    step = Step(action="craft", target="saw_planks")
+    out, _ = run(state, "ada", step)  # exactly at the limit still fits, as in the engine
+    assert out.decision is not None and isinstance(out.decision.intent, (MoveTo, Craft))
+    ada.inventory.add(registry, "wood", 1)
+    out, progress = run(state, "ada", step)
+    assert out.failed == "no room to carry the saw_planks output" and progress.issued is False
 
 
 @pytest.mark.req("REQ-AGT-004")

@@ -54,6 +54,7 @@ def test_plan_mind_defaults() -> None:
     assert (c.chars_per_token, c.plan_template, c.drawn_traits) == (4.0, "plan.v1", 0)
     assert c.triggers == TRIGGERS == ("idle", "step_completed", "step_failed", "need", "periodic")
     assert c.steering_phrases == STEERING
+    assert (c.rest_hours, c.stall_hours) == (1.0, 1.0)
     assert "you must obey" in STEERING and "you may break" in STEERING
 
 
@@ -66,6 +67,10 @@ def test_plan_mind_defaults() -> None:
         ("replan_hours", 0.0, "hours and chars_per_token must be positive"),
         ("fallback_hours", -1.0, "hours and chars_per_token must be positive"),
         ("chars_per_token", 0.0, "hours and chars_per_token must be positive"),
+        ("rest_hours", 0.0, "hours and chars_per_token must be positive"),
+        ("stall_hours", -1.0, "hours and chars_per_token must be positive"),
+        ("rest_hours", math.inf, "numeric parameters must be finite"),
+        ("stall_hours", math.nan, "numeric parameters must be finite"),
         ("replan_hours", math.nan, "numeric parameters must be finite"),
         ("chars_per_token", math.inf, "numeric parameters must be finite"),
         ("max_retries", -1, "max_retries and drawn_traits must be non-negative"),

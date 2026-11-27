@@ -2,6 +2,7 @@ from collections.abc import Callable
 
 import pytest
 
+from pericles.agents.config import AgentConfig
 from pericles.agents.executor import Outcome, Progress, begin
 from pericles.agents.plan import Step
 from pericles.agents.view import View
@@ -85,7 +86,7 @@ def test_eat_carried_food_then_done(
     state = make_world(rows, [ada])
     out, progress = run(state, "ada", Step(action="eat"))
     assert out.decision is not None and isinstance(out.decision.intent, Eat)
-    assert out.decision.intent.item == "berries" and out.decision.intent.qty >= 1
+    assert out.decision.intent == Eat("ada", "berries", 4)  # ceil(60 / 15 nutrition)
     assert run(state, "ada", Step(action="eat"), progress)[0].done
 
 
@@ -98,7 +99,7 @@ def test_eat_fetches_from_a_store_or_fails(
     store: Callable[..., Building],
 ) -> None:
     """AC1/AC2: eat fetches stored food; with none anywhere it fails."""
-    ada = Villager("ada", "Ada", Coord(1, 1))
+    ada = Villager("ada", "Ada", Coord(1, 1), needs={"hunger": 60.0})
     state = make_world(rows, [ada])
     assert run(state, "ada", Step(action="eat"))[0].failed == "no food to eat"
     assert run(state, "ada", Step(action="eat", target="fish"))[0].failed == "no fish to eat"
@@ -136,6 +137,42 @@ def test_rest_waits_for_its_hours(
     assert not run(state, "ada", step, progress)[0].done
     state.tick = 2 * per_hour
     assert run(state, "ada", step, progress)[0].done
+
+
+@pytest.mark.req("REQ-AGT-004")
+def test_rest_without_hours_waits_rest_hours(
+    registry: Registry, make_world: MakeWorld, rows: list[str], run: Runner
+) -> None:
+    """AC1: a bare `rest` waits agents.rest_hours, not a built-in hour."""
+    state = make_world(rows, [Villager("ada", "Ada", Coord(1, 1))])
+    config = AgentConfig(rest_hours=3.0)
+    step = Step(action="rest")
+    out, progress = run(state, "ada", step, config=config)
+    assert out.decision is not None and out.decision.intent == Wait("ada")
+    per_hour = 60 // default_config().calendar.tick_minutes
+    state.tick = 3 * per_hour - 1
+    assert not run(state, "ada", step, progress, config=config)[0].done
+    state.tick = 3 * per_hour
+    assert run(state, "ada", step, progress, config=config)[0].done
+
+
+@pytest.mark.req("REQ-AGT-004")
+def test_eat_when_not_hungry_fails_without_eating(
+    registry: Registry, make_world: MakeWorld, rows: list[str], run: Runner
+) -> None:
+    """AC2: eat below the eat act_at fails ("not hungry") rather than wasting food."""
+    act_at = AgentConfig().act_at["eat"]
+    ada = Villager(
+        "ada", "Ada", Coord(1, 1), inventory=Inventory({"berries": 5}), needs={"hunger": 0.0}
+    )
+    state = make_world(rows, [ada])
+    out, progress = run(state, "ada", Step(action="eat"))
+    assert out == Outcome(failed="not hungry") and progress.issued is False
+    ada.needs["hunger"] = act_at - 1
+    assert run(state, "ada", Step(action="eat"))[0].failed == "not hungry"
+    ada.needs["hunger"] = act_at
+    out, _ = run(state, "ada", Step(action="eat"))
+    assert out.decision is not None and isinstance(out.decision.intent, Eat)
 
 
 @pytest.mark.req("REQ-AGT-004")

@@ -3,7 +3,7 @@ from collections.abc import Callable, Sequence
 
 import pytest
 
-from pericles.agents.config import AgentConfig
+from pericles.agents.config import AgentConfig, ticks_for_hours
 from pericles.agents.controller import Controller, Planner
 from pericles.agents.executor import Progress, begin
 from pericles.agents.plan import Plan, Step
@@ -286,33 +286,158 @@ def test_rejected_intent_fails_the_step_on_its_next_due_tick(
     assert record.progress == Progress(start=due, base=2)
 
 
-@pytest.mark.req("REQ-AGT-004")
-def test_craft_rejected_every_time_fails_instead_of_reissuing_forever(
-    registry: Registry, make_world: MakeWorld
-) -> None:
-    """AC2: a Craft the engine rejects each time fails the step rather than looping."""
-    plan = json.dumps(
-        {"goal": "g", "steps": [{"action": "craft", "target": "saw_planks"}], "reason": "r"}
-    )
-    ada = Villager("ada", "Ada", Coord(2, 2), model="m", inventory=Inventory({"wood": 3}))
-    controller, _engine, state, _backend = setup(
-        registry, make_world, [plan, REST], villagers=[ada], triggers=("idle",)
-    )
-    camp = Building("b1", "lumber_camp", Coord(3, 2), Ownership("communal"), complete=True)
-    state.buildings["b1"] = camp
-    crafts = 0
-    steps: list[dict] = []  # type: ignore[type-arg]
-    for _ in range(10):
+CRAFT = json.dumps(
+    {"goal": "g", "steps": [{"action": "craft", "target": "saw_planks"}], "reason": "r"}
+)
+CAMP = Building("b1", "lumber_camp", Coord(3, 2), Ownership("communal"), complete=True)
+
+
+def rejecting_run(
+    controller: Controller, state: WorldState, ticks: int, reason: str = "busy"
+) -> Notes:
+    """Run `ticks` ticks without the engine; the engine rejects every Craft sent."""
+    notes: Notes = []
+    for _ in range(ticks):
         intents = controller.intents(state)
         state.tick += 1
-        crafted = [i for i in intents if isinstance(i, Craft)]
-        crafts += len(crafted)
-        rejected = Event(state.tick, 0, "intent_rejected", {"actor": "ada", "reason": "busy"})
-        controller.observe(state, [rejected] if crafted else [])
-        steps += [d for k, d in controller.events() if k == "plan_step" and d["action"] == "craft"]
-        controller.memory["ada"].idle_until = 0
-    assert crafts == 1
-    assert [d["status"] for d in steps] == ["failed"] and "busy" in steps[0]["reason"]
+        rejected = [
+            Event(state.tick, 0, "intent_rejected", {"actor": i.actor, "reason": reason})
+            for i in intents
+            if isinstance(i, Craft)
+        ]
+        controller.observe(state, rejected)
+        notes += controller.events()
+    return notes
+
+
+@pytest.mark.req("REQ-AGT-004")
+@pytest.mark.req("REQ-AGT-005")
+def test_craft_rejected_every_time_falls_back_instead_of_asking_every_tick(
+    registry: Registry, make_world: MakeWorld
+) -> None:
+    """AGT-004 AC2: a Craft the engine rejects each time fails its step. AGT-005 AC2: with
+    the default triggers and nothing reset by hand, a plan that fails before any step
+    completed starts the fallback window, so the villager asks once per fallback_hours."""
+    ada = Villager("ada", "Ada", Coord(2, 2), model="m", inventory=Inventory({"wood": 3}))
+    controller, _engine, state, backend = setup(registry, make_world, [CRAFT] * 50, villagers=[ada])
+    state.buildings["b1"] = CAMP
+    window = ticks_for_hours(default_config().calendar.tick_minutes, AgentConfig().fallback_hours)
+    notes = rejecting_run(controller, state, 2 * window + 5)
+    steps = [d for k, d in notes if k == "plan_step"]
+    assert [(d["action"], d["status"]) for d in steps] == [("craft", "failed")] * 3
+    assert all("busy" in d["reason"] for d in steps)
+    fallbacks = [d for k, d in notes if k == "mind_fallback"]
+    assert [d["reason"] for d in fallbacks] == ["the plan made no progress"] * 3
+    assert all(d["flagged"] is False for d in fallbacks)
+    asked = [0, window + 1, 2 * window + 2]
+    assert [r.seed for r in backend.calls] == [seed_for(7, "ada", t) for t in asked]
+    second = backend.calls[1].messages[-1].content
+    assert "step_failed" in second and "busy" in second
+
+
+@pytest.mark.req("REQ-AGT-005")
+def test_every_stalled_villager_in_a_batch_falls_back(
+    registry: Registry, make_world: MakeWorld
+) -> None:
+    """AC2: the guard handles each due villager in turn; one stalling does not end the tick."""
+    people = [
+        Villager(v, v.title(), pos, model="m", inventory=Inventory({"wood": 3}))
+        for v, pos in (("ada", Coord(2, 2)), ("bo", Coord(3, 1)))  # both beside the camp
+    ]
+    controller, _engine, state, backend = setup(
+        registry, make_world, [CRAFT] * 50, villagers=people
+    )
+    state.buildings["b1"] = CAMP
+    notes = rejecting_run(controller, state, 2)
+    assert [d["actor"] for k, d in notes if k == "mind_fallback"] == ["ada", "bo"]
+    assert len(backend.calls) == 2
+
+
+@pytest.mark.req("REQ-AGT-005")
+@pytest.mark.parametrize(("stall_ticks", "asks"), [(1, 3), (2, 1)])
+def test_the_no_progress_guard_covers_stall_hours_after_adoption(
+    registry: Registry, make_world: MakeWorld, stall_ticks: int, asks: int
+) -> None:
+    """AC2: a failure stall_hours or more after adoption asks again; a sooner one falls back."""
+    minutes = default_config().calendar.tick_minutes
+    ada = Villager("ada", "Ada", Coord(2, 2), model="m", inventory=Inventory({"wood": 3}))
+    controller, _engine, state, backend = setup(
+        registry,
+        make_world,
+        [CRAFT] * 50,
+        villagers=[ada],
+        stall_hours=stall_ticks * minutes / 60,
+    )
+    state.buildings["b1"] = CAMP
+    notes = rejecting_run(controller, state, 3)
+    assert len(backend.calls) == asks
+    assert ("mind_fallback" in kinds(notes)) is (asks == 1)
+
+
+@pytest.mark.req("REQ-AGT-005")
+def test_a_plan_that_completed_a_step_asks_again_when_it_fails(
+    registry: Registry, make_world: MakeWorld
+) -> None:
+    """AC2: the guard is for plans that achieved nothing; one with a completed step re-plans."""
+    plan = json.dumps(
+        {
+            "goal": "g",
+            "steps": [{"action": "rest", "qty": 1}, {"action": "craft", "target": "saw_planks"}],
+            "reason": "r",
+        }
+    )
+    ada = Villager("ada", "Ada", Coord(2, 2), model="m", inventory=Inventory({"wood": 3}))
+    controller, _engine, state, backend = setup(
+        registry,
+        make_world,
+        [plan] * 50,
+        villagers=[ada],
+        triggers=("idle", "step_failed"),
+        stall_hours=5.0,
+    )
+    state.buildings["b1"] = CAMP
+    rest = 60 // default_config().calendar.tick_minutes
+    notes = rejecting_run(controller, state, rest + 2)
+    statuses = [(d["action"], d["status"]) for k, d in notes if k == "plan_step"]
+    assert statuses == [("rest", "done"), ("craft", "failed")]
+    assert "mind_fallback" not in kinds(notes)
+    assert [r.seed for r in backend.calls] == [seed_for(7, "ada", t) for t in (0, rest + 1)]
+
+
+@pytest.mark.req("REQ-AGT-005")
+def test_villagers_queuing_at_a_full_workplace_do_not_storm_the_llm(
+    registry: Registry, make_world: MakeWorld
+) -> None:
+    """AC2 (real engine, default triggers): three plan villagers crafting at a two-worker
+    lumber camp, and one carrying too much to craft, ask at most once per fallback window."""
+    plan = json.dumps(
+        {
+            "goal": "g",
+            "steps": [{"action": "craft", "target": "saw_planks", "qty": 5}],
+            "reason": "r",
+        }
+    )
+    full = int(default_config().carry_limit // registry.items["wood"].weight) + 1
+    loads = {"ada": 5, "bob": 5, "cy": 5, "di": full}
+    people = [
+        Villager(v, v.title(), Coord(2 + i, 3), model="m", inventory=Inventory({"wood": n}))
+        for i, (v, n) in enumerate(loads.items())
+    ]
+    controller, engine, state, backend = setup(
+        registry, make_world, [plan] * 1000, villagers=people
+    )
+    state.buildings["b1"] = CAMP
+    ticks = 180
+    window = ticks_for_hours(default_config().calendar.tick_minutes, AgentConfig().fallback_hours)
+    rejected: list[str] = []
+    for _ in range(ticks):
+        state, events = engine.step(state, controller.intents(state))
+        controller.observe(state, events)
+        controller.events()
+        rejected += [str(e.data.get("reason")) for e in events if e.kind == "intent_rejected"]
+    bound = len(people) * (ticks // window + 1)
+    assert len(backend.calls) <= bound
+    assert "building_full" not in rejected and "carry_limit" not in rejected
 
 
 @pytest.mark.req("REQ-AGT-005")
@@ -483,7 +608,10 @@ def test_snapshot_round_trip_continues_identically(
 
 def test_events_carry_their_full_payloads(registry: Registry, make_world: MakeWorld) -> None:
     """ADR-0018 §6: plan_made and plan_step name the actor, step, target, goal and reason."""
-    controller, engine, state, _backend = setup(registry, make_world, [BERRIES], triggers=("idle",))
+    ada = Villager("ada", "Ada", Coord(2, 2), model="m", needs={"hunger": 60.0})
+    controller, engine, state, _backend = setup(
+        registry, make_world, [BERRIES], villagers=[ada], triggers=("idle",)
+    )
     notes: Notes = []
     for _ in range(120):
         state, more = step(controller, engine, state)
@@ -747,7 +875,14 @@ def test_a_rejected_eat_fails_the_step_with_the_rejection(
 ) -> None:
     """AC2: an Eat the engine rejects is a failed step, not one done because it was sent."""
     plan = json.dumps({"goal": "eat", "steps": [{"action": "eat"}], "reason": "r"})
-    ada = Villager("ada", "Ada", Coord(2, 2), model="m", inventory=Inventory({"berries": 3}))
+    ada = Villager(
+        "ada",
+        "Ada",
+        Coord(2, 2),
+        model="m",
+        inventory=Inventory({"berries": 3}),
+        needs={"hunger": 60.0},
+    )
     controller, _engine, state, _backend = setup(
         registry, make_world, [plan, REST], villagers=[ada], triggers=("idle",)
     )
