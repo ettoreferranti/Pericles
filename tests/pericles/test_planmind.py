@@ -35,6 +35,13 @@ BERRIES = json.dumps(
         "reason": "hungry",
     }
 )
+GATHER = json.dumps(  # no eat step: `eat` is unavailable to a villager who is not hungry
+    {
+        "goal": "food",
+        "steps": [{"action": "gather", "target": "berries", "qty": 2}, {"action": "store"}],
+        "reason": "stock up",
+    }
+)
 SNAP = json.dumps(
     {
         "goal": "food",
@@ -121,7 +128,7 @@ def test_first_tick_plans_on_idle_and_records_the_trigger(
     registry: Registry, make_world: MakeWorld
 ) -> None:
     """AC1/AC3: a villager with no plan asks on `idle`; the trigger is in the plan_made event."""
-    controller, engine, state, backend = setup(registry, make_world, [BERRIES])
+    controller, engine, state, backend = setup(registry, make_world, [GATHER])
     state, notes = step(controller, engine, state)
     assert len(backend.calls) == 1
     made = dict(notes)["plan_made"]
@@ -498,7 +505,7 @@ def test_invalid_output_is_retried_with_the_error(
     registry: Registry, make_world: MakeWorld
 ) -> None:
     """AC1/AC3: an invalid answer is retried with the validation error; both are logged."""
-    controller, engine, state, backend = setup(registry, make_world, ["not json", BERRIES])
+    controller, engine, state, backend = setup(registry, make_world, ["not json", GATHER])
     state, notes = step(controller, engine, state)
     assert len(backend.calls) == 2
     retry = backend.calls[1].messages
@@ -517,7 +524,7 @@ def test_invalid_action_target_counts_as_invalid(registry: Registry, make_world:
     bad = json.dumps(
         {"goal": "g", "steps": [{"action": "build", "target": "castle"}], "reason": "r"}
     )
-    controller, engine, state, _backend = setup(registry, make_world, [bad, BERRIES])
+    controller, engine, state, _backend = setup(registry, make_world, [bad, GATHER])
     state, notes = step(controller, engine, state)
     assert "'castle' is not a valid target for build" in dict(notes)["plan_invalid"]["error"]
 
@@ -974,3 +981,19 @@ def test_a_record_saved_before_urgent_tracking_loads_and_round_trips() -> None:
     assert Record.from_dict(data).urgent == ["eat"]
     del data["urgent"]
     assert Record.from_dict(data).urgent == [] and Record.from_dict(data).above == ["eat"]
+
+
+@pytest.mark.req("REQ-AGT-005")
+def test_a_stray_target_on_sleep_is_adopted_without_a_retry(
+    registry: Registry, make_world: MakeWorld
+) -> None:
+    """AC1: `sleep` with a target is valid output: no retry, and the adopted plan drops it."""
+    sleep = json.dumps(
+        {"goal": "rest", "steps": [{"action": "sleep", "target": "house b0"}], "reason": "r"}
+    )
+    controller, engine, state, backend = setup(registry, make_world, [sleep])
+    state, notes = step(controller, engine, state)
+    made = [d for k, d in notes if k == "plan_made"]
+    assert len(backend.calls) == 1
+    assert "plan_invalid" not in kinds(notes)
+    assert made[0]["retries"] == 0 and made[0]["steps"][0]["target"] is None

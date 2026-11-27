@@ -10,7 +10,13 @@ from typing import Any, cast
 from pericles.agents.config import RELIEFS, TRIGGERS, AgentConfig, ticks_for_hours
 from pericles.agents.controller import WATCHED, Mind, failed_event
 from pericles.agents.executor import Progress, advance, begin
-from pericles.agents.plan import Catalog, Plan, catalog_for, check_plan
+from pericles.agents.plan import (
+    Catalog,
+    Plan,
+    catalog_for,
+    check_plan,
+    without_ignored_targets,
+)
 from pericles.agents.prompt import Situation, Template, load_template, plan_messages
 from pericles.agents.scripted import ScriptedMind
 from pericles.agents.view import Decision, View
@@ -287,7 +293,7 @@ class PlanMind:
                 if error is None and plan is not None:
                     error = check_plan(plan, catalogs[vid], self.config.max_plan_steps)
                 if error is None and plan is not None:
-                    adopted[vid] = (plan, request.attempt)
+                    adopted[vid] = (without_ignored_targets(plan), request.attempt)
                     continue
                 notes.append(
                     (
