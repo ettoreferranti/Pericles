@@ -22,7 +22,7 @@ from pericles.experiment.defaults import default_config
 from pericles.llm.cache import ResponseCache
 from pericles.llm.fake import FakeBackend, FakeError, FakeRule
 from pericles.llm.gateway import BackendUnavailable, FailurePolicy, Gateway
-from pericles.llm.types import ModelSpec, Sampling
+from pericles.llm.types import ModelSpec, Request, Result, Sampling
 
 MakeWorld = Callable[..., WorldState]
 Notes = list[tuple[str, dict]]  # type: ignore[type-arg]
@@ -32,6 +32,16 @@ BERRIES = json.dumps(
     {
         "goal": "food",
         "steps": [{"action": "gather", "target": "berries", "qty": 2}, {"action": "eat"}],
+        "reason": "hungry",
+    }
+)
+SNAP = json.dumps(
+    {
+        "goal": "food",
+        "steps": [
+            {"action": "gather", "target": "berries", "qty": 2},
+            {"action": "rest", "qty": 5},
+        ],
         "reason": "hungry",
     }
 )
@@ -47,10 +57,11 @@ def setup(
     *,
     mode: str = "wait",
     villagers: Sequence[Villager] | None = None,
+    rules: Sequence[FakeRule] = (),
     **config: object,
 ) -> tuple[Controller, Engine, WorldState, FakeBackend]:
     agents = AgentConfig(**config)  # type: ignore[arg-type]
-    backend = FakeBackend([FakeRule(tuple(replies), kind="plan")])
+    backend = FakeBackend([*rules, FakeRule(tuple(replies), kind="plan")])
     gateway = Gateway(
         {"m": ModelSpec("f", "fake-model", Sampling(0.7, 0.9, 256))},
         {"f": backend},
@@ -131,15 +142,16 @@ def test_no_call_on_ticks_without_a_trigger(registry: Registry, make_world: Make
 @pytest.mark.req("REQ-AGT-001")
 def test_need_crossing_act_at_triggers_a_replan(registry: Registry, make_world: MakeWorld) -> None:
     """AC1/AC3: a need rising to act_at fires `need` once."""
-    controller, engine, state, _backend = setup(
+    controller, engine, state, backend = setup(
         registry, make_world, [REST], triggers=("idle", "need")
     )
     state, _ = step(controller, engine, state)
-    state.villagers["ada"].needs["hunger"] = 60.0
+    state.villagers["ada"].needs["hunger"] = AgentConfig().act_at["eat"]  # exactly at act_at
     state.villagers["ada"].path, state.villagers["ada"].activity = [], None
     controller.memory["ada"].idle_until = 0
     state, notes = step(controller, engine, state)
     assert dict(notes)["plan_made"]["triggers"] == ["need"]
+    assert "Goal: rest" in backend.calls[-1].messages[-1].content  # the plan it replaces
     controller.memory["ada"].idle_until = 0
     state, notes = step(controller, engine, state)
     assert "plan_made" not in kinds(notes)
@@ -306,6 +318,8 @@ def test_invalid_output_is_retried_with_the_error(
     assert retry[-1].role == "user" and "could not be used" in retry[-1].content
     invalid = dict(notes)["plan_invalid"]
     assert invalid["attempt"] == 0 and invalid["model"] == "m" and invalid["error"]
+    assert invalid == {"model": "m", "actor": "ada", "attempt": 0, "error": invalid["error"]}
+    assert invalid["error"] in retry[-1].content
     assert dict(notes)["plan_made"]["retries"] == 1
 
 
@@ -362,8 +376,13 @@ def test_plan_that_cannot_start_falls_back_instead_of_asking_every_tick(
     for _ in range(10):
         state, notes = step(controller, engine, state)
         fallbacks += [d["reason"] for k, d in notes if k == "mind_fallback"]
+        flags = [(d["actor"], d["flagged"]) for k, d in notes if k == "mind_fallback"]
+        assert flags in ([], [("ada", False)])
     assert len(backend.calls) == 1
     assert fallbacks == ["the plan gave nothing to do"]
+    record = mind_of(controller).records["ada"]
+    assert record.plan is None and record.progress == Progress()
+    assert Record.from_dict(record.to_dict()) == record
 
 
 @pytest.mark.req("REQ-LLM-009")
@@ -422,7 +441,8 @@ def test_record_round_trips_through_its_dict() -> None:
         fallback_until=9,
         rejected="intent_rejected: busy",
     )
-    assert Record.from_dict(json.loads(json.dumps(record.to_dict()))) == record
+    assert json.loads(json.dumps(record.to_dict())) == record.to_dict()  # JSON-shaped
+    assert Record.from_dict(record.to_dict()) == record
     assert Record.from_dict(Record().to_dict()) == Record()
 
 
@@ -430,19 +450,237 @@ def test_snapshot_round_trip_continues_identically(
     registry: Registry, make_world: MakeWorld
 ) -> None:
     """ADR-0018 §7: a restored mind continues the same step without asking again."""
-    controller, engine, state, _backend = setup(registry, make_world, [BERRIES])
+    controller, engine, state, _backend = setup(registry, make_world, [SNAP], triggers=("idle",))
     for _ in range(5):
         state, _ = step(controller, engine, state)
     blob = controller.to_dict()
-    twin, twin_engine, _, twin_backend = setup(registry, make_world, [BERRIES])
+    twin, twin_engine, _, twin_backend = setup(registry, make_world, [SNAP], triggers=("idle",))
     twin.load(blob)
+    assert twin.to_dict() == blob
     saved = WorldState.from_dict(state.to_dict())
     a: list[Notes] = []
-    for _ in range(10):
+    for _ in range(40):
         state, notes = step(controller, engine, state)
         a.append(notes)
     b: list[Notes] = []
-    for _ in range(10):
+    for _ in range(40):
         saved, notes = step(twin, twin_engine, saved)
         b.append(notes)
     assert a == b and twin_backend.calls == []
+    assert "plan_step" in [k for notes in a for k, _ in notes]  # the mind acted in the window
+
+
+def test_events_carry_their_full_payloads(registry: Registry, make_world: MakeWorld) -> None:
+    """ADR-0018 §6: plan_made and plan_step name the actor, step, target, goal and reason."""
+    controller, engine, state, _backend = setup(registry, make_world, [BERRIES], triggers=("idle",))
+    notes: Notes = []
+    for _ in range(120):
+        state, more = step(controller, engine, state)
+        notes += more
+        if len([k for k, _ in notes if k == "plan_step"]) >= 2:
+            break
+    made = next(d for k, d in notes if k == "plan_made")
+    assert made == {
+        "model": "m",
+        "actor": "ada",
+        "triggers": ["idle"],
+        "goal": "food",
+        "steps": [
+            {"action": "gather", "target": "berries", "qty": 2},
+            {"action": "eat", "target": None, "qty": None},
+        ],
+        "reason": "hungry",
+        "retries": 0,
+        "template": "plan.v1",
+    }
+    steps = [d for k, d in notes if k == "plan_step"]
+    assert steps[:2] == [
+        {
+            "model": "m",
+            "actor": "ada",
+            "index": 0,
+            "action": "gather",
+            "target": "berries",
+            "status": "done",
+        },
+        {
+            "model": "m",
+            "actor": "ada",
+            "index": 1,
+            "action": "eat",
+            "target": None,
+            "status": "done",
+        },
+    ]
+
+
+@pytest.mark.req("REQ-AGT-004")
+def test_steps_run_in_order_each_from_a_fresh_start(
+    registry: Registry, make_world: MakeWorld
+) -> None:
+    """AC1/AC2: failed and finished steps hand over in order; each step has its own start."""
+    plan = json.dumps(
+        {
+            "goal": "g",
+            "steps": [
+                {"action": "gather", "target": "iron_ore"},
+                {"action": "gather", "target": "iron_ore"},
+                {"action": "rest", "qty": 1},
+                {"action": "rest", "qty": 1},
+                {"action": "gather", "target": "berries", "qty": 1},
+            ],
+            "reason": "r",
+        }
+    )
+    controller, engine, state, _backend = setup(
+        registry, make_world, [plan], triggers=("idle",), max_plan_steps=5
+    )
+    per_hour = 60 // default_config().calendar.tick_minutes
+    seen: list[tuple[int, str, str, str | None]] = []
+    starts: list[int] = []
+    for _ in range(3 * per_hour):
+        state, notes = step(controller, engine, state)
+        for k, d in notes:
+            if k == "plan_step":
+                seen.append((d["index"], d["action"], d["status"], d.get("reason")))
+                starts.append(mind_of(controller).records["ada"].progress.start)
+        if len(seen) >= 5:
+            break
+        if "ada" in controller.memory:
+            controller.memory["ada"].idle_until = 0
+    reason = "no iron_ore source within reach"
+    assert seen[:5] == [
+        (0, "gather", "failed", reason),
+        (1, "gather", "failed", reason),
+        (2, "rest", "done", None),
+        (3, "rest", "done", None),
+        (4, "gather", "done", None),
+    ]
+    assert starts[2] - starts[1] == per_hour  # the second rest began when the first ended
+
+
+@pytest.mark.req("REQ-AGT-001")
+def test_periodic_fires_exactly_every_replan_hours(
+    registry: Registry, make_world: MakeWorld
+) -> None:
+    """AC1: with the villager due every tick, `periodic` fires replan_hours after each plan."""
+    long_rest = json.dumps(
+        {"goal": "rest", "steps": [{"action": "rest", "qty": 99}], "reason": "r"}
+    )
+    controller, engine, state, _backend = setup(
+        registry, make_world, [long_rest], triggers=("idle", "periodic"), replan_hours=0.25
+    )
+    every = 15 // default_config().calendar.tick_minutes
+    ticks: list[int] = []
+    for _ in range(2 * every + 1):
+        now = state.tick
+        state, notes = step(controller, engine, state)
+        ticks += [now for k, _ in notes if k == "plan_made"]
+        controller.memory["ada"].idle_until = 0
+    assert ticks == [0, every, 2 * every]
+
+
+@pytest.mark.req("REQ-AGT-001")
+def test_batch_asks_in_villager_order_and_handles_each_answer(
+    registry: Registry, make_world: MakeWorld
+) -> None:
+    """AC1/REQ-AGT-005 AC2: one batch per tick in id order; one villager's fallback leaves the
+    other's plan running."""
+    people = [
+        Villager("bo", "Bo", Coord(3, 3), model="m"),
+        Villager("ada", "Ada", Coord(2, 2), model="m"),
+    ]
+    controller, engine, state, backend = setup(
+        registry,
+        make_world,
+        [REST],
+        villagers=people,
+        rules=[FakeRule(("x",), kind="plan", villager="ada")],
+        fallback_hours=2.0,
+    )
+    state, notes = step(controller, engine, state)
+    assert [c.villager for c in backend.calls] == ["ada", "bo", "ada", "ada"]
+    assert [(k, d["actor"]) for k, d in notes] == [
+        ("plan_invalid", "ada"),
+        ("plan_invalid", "ada"),
+        ("plan_invalid", "ada"),
+        ("mind_fallback", "ada"),
+        ("plan_made", "bo"),
+    ]
+    per_hour = 60 // default_config().calendar.tick_minutes
+    done: list[int] = []
+    for _ in range(per_hour + 5):
+        for vid in ("ada", "bo"):
+            villager = state.villagers[vid]
+            villager.path, villager.activity = [], None
+            controller.memory[vid].idle_until = 0
+        now = state.tick
+        state, notes = step(controller, engine, state)
+        done += [now for k, d in notes if k == "plan_step" and d["actor"] == "bo"]
+    assert done[:1] == [per_hour]  # bo's rest ends on time while ada is in her fallback window
+
+
+def test_requests_name_kind_villager_tick_seed_and_template(
+    registry: Registry, make_world: MakeWorld
+) -> None:
+    """ADR-0018 §2: each request is a `plan` request for this tick, seeded from the run."""
+    seen: list[Request] = []
+
+    def complete(requests: Sequence[Request]) -> list[Result]:
+        seen.extend(requests)
+        value = Plan.model_validate_json(REST)
+        return [Result(r, REST, value, None, None, 0, 0, 0.0, False) for r in requests]
+
+    agents = AgentConfig()
+    engine = Engine(registry, default_config())
+    controller = scripted_controller(engine.context, agents, plan_minds(["m"], complete, agents, 7))
+    state = make_world(ROWS, [Villager("ada", "Ada", Coord(2, 2), model="m")])
+    state.tick = 5
+    controller.intents(state)
+    (request,) = seen
+    assert (request.kind, request.villager, request.tick, request.model) == ("plan", "ada", 5, "m")
+    assert (request.seed, request.output, request.attempt) == (seed_for(7, "ada", 5), Plan, 0)
+    assert request.template == "plan.v1"
+
+
+def test_decide_without_a_record_uses_the_fallback(
+    registry: Registry, make_world: MakeWorld
+) -> None:
+    """A villager the mind never prepared is decided by the scripted fallback."""
+    controller, _engine, state, _backend = setup(registry, make_world, [REST])
+    ada = state.villagers["ada"]
+    view = controller.view(state)
+    assert mind_of(controller).decide(view, ada) == ScriptedMind().decide(view, ada)
+
+
+def test_observe_keeps_only_failures_of_villagers_with_a_plan(
+    registry: Registry, make_world: MakeWorld
+) -> None:
+    """ADR-0018 §4: only engine failures count; the first one is kept; others are ignored."""
+    people = [
+        Villager("ada", "Ada", Coord(2, 2), model="m"),
+        Villager("bo", "Bo", Coord(3, 3), model="m"),
+    ]
+    controller, _engine, state, _backend = setup(
+        registry, make_world, [REST], villagers=people, rules=[FakeRule(("x",), villager="bo")]
+    )
+    controller.intents(state)
+    mind = mind_of(controller)
+    assert mind.records["ada"].plan is not None and mind.records["bo"].plan is None
+
+    def event(kind: str, **data: object) -> Event:
+        return Event(state.tick, 0, kind, data)
+
+    mind.observe(
+        state,
+        [
+            event("work_interrupted", actor="ada", cause="villager", reason="chose"),
+            event("villager_moved", actor="ada"),
+            event("intent_rejected", actor="ghost", reason="gone"),
+            event("intent_rejected", actor="bo", reason="no plan"),
+            event("intent_rejected", actor="ada"),
+            event("move_failed", actor="ada", reason="blocked"),
+        ],
+    )
+    assert mind.records["ada"].rejected == "intent_rejected: intent_rejected"
+    assert mind.records["bo"].rejected is None
