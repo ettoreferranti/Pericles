@@ -49,6 +49,7 @@ class Record:
     pending: list[str] = field(default_factory=list)
     failure: str | None = None
     above: list[str] = field(default_factory=list)
+    urgent: list[str] = field(default_factory=list)
     fallback_until: int = 0
     rejected: str | None = None
     decision: Decision | None = None
@@ -62,6 +63,7 @@ class Record:
             "pending": list(self.pending),
             "failure": self.failure,
             "above": list(self.above),
+            "urgent": list(self.urgent),
             "fallback_until": self.fallback_until,
             "rejected": self.rejected,
         }
@@ -77,6 +79,7 @@ class Record:
             pending=[str(t) for t in data["pending"]],
             failure=_optional(data["failure"]),
             above=[str(r) for r in data["above"]],
+            urgent=[str(r) for r in data.get("urgent", [])],  # absent in M2b snapshots
             fallback_until=int(data["fallback_until"]),
             rejected=_optional(data["rejected"]),
         )
@@ -235,10 +238,12 @@ class PlanMind:
         fired = set(record.pending)
         if record.plan is None:
             fired.add(IDLE)
-        now = [r for r in RELIEFS if view.level(villager, r) >= self.config.act_at[r]]
-        if set(now) - set(record.above):
+        levels = {r: view.level(villager, r) for r in RELIEFS}
+        now = [r for r in RELIEFS if levels[r] >= self.config.act_at[r]]
+        urgent = [r for r in RELIEFS if levels[r] >= self.config.urgent_at[r]]
+        if set(now) - set(record.above) or set(urgent) - set(record.urgent):
             fired.add(NEED)
-        record.above = now
+        record.above, record.urgent = now, urgent
         replan = ticks_for_hours(view.ctx.config.calendar.tick_minutes, self.config.replan_hours)
         if record.plan is not None and view.tick - record.planned_tick >= replan:
             fired.add(PERIODIC)

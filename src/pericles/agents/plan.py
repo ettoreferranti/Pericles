@@ -35,7 +35,7 @@ USAGE = {
     "gather": "gather <item> [qty]: collect a raw item from the land",
     "eat": "eat [food]: eat food you carry, or fetch it from a store you may use",
     "sleep": "sleep: go home if you have one, and sleep until rested",
-    "rest": "rest [hours]: stay where you are",
+    "rest": "rest [hours]: stay where you are; it relieves no need",
     "go_home": "go_home: walk home",
     "move_in": "move_in: take a bed in a house with room",
     "court": "court <villager>: ask to become partners, or accept their proposal",

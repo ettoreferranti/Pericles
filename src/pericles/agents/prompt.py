@@ -21,6 +21,12 @@ PROMPTS = Path(str(files("pericles.agents").joinpath("prompts")))
 PARTS = ("system", "user", "retry")
 ALWAYS = 99  # a rank: sections at this rank are never trimmed
 RECIPES, NEARBY, STORES, FAMILY, BELONGINGS = 1, 2, 3, 4, 5  # ranks, first trimmed to last
+# What relieves a need, by its relief; eating works only from `act_at["eat"]` (the executor).
+RELIEVED_BY = {
+    "eat": "eat relieves it, once it is {act_at:.0f} or more",
+    "sleep": "only sleep relieves it",
+    "shelter": "being at home relieves it",
+}
 
 
 class TemplateError(ValueError):
@@ -97,9 +103,12 @@ def _bundle(bundle: Mapping[str, int]) -> str:
 
 def _you(view: View, villager: Villager) -> Section:
     calendar = view.ctx.config.calendar
-    days = age_days(view.ctx, view.state, villager)
-    years = days // calendar.days_per_year
-    age = f"{years} years old" if years else f"{days} days old"
+    if not villager.adult:
+        age = "a child"
+    elif age_days(view.ctx, view.state, villager) >= view.ctx.config.old_age_days:
+        age = "an elder"
+    else:
+        age = "an adult"
     sex = villager.sex or "of no stated sex"
     when = calendar.time_of(view.state.tick)
     day = when.day % calendar.days_per_year
@@ -129,8 +138,11 @@ def _needs(view: View, villager: Villager) -> Section:
     lines = []
     for need, level in sorted(villager.needs.items()):
         relief = needs[need].relief
-        urgent = relief in RELIEFS and _urgent(view, relief, level)
-        lines.append(f"- {need}: {level:.0f}/100" + (" (urgent)" if urgent else ""))
+        line = f"- {need}: {level:.0f}/100"
+        if relief in RELIEFS:
+            line += " (urgent)" if _urgent(view, relief, level) else ""
+            line += "; " + RELIEVED_BY[relief].format(act_at=view.config.act_at[relief])
+        lines.append(line)
     if villager.damage > 0:
         lines.append(f"- injury: {villager.damage:.0f}")
     return Section("Needs", tuple(lines), ALWAYS)

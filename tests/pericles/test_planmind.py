@@ -125,7 +125,7 @@ def test_first_tick_plans_on_idle_and_records_the_trigger(
     state, notes = step(controller, engine, state)
     assert len(backend.calls) == 1
     made = dict(notes)["plan_made"]
-    assert made["triggers"] == ["idle"] and made["model"] == "m" and made["template"] == "plan.v1"
+    assert made["triggers"] == ["idle"] and made["model"] == "m" and made["template"] == "plan.v2"
     assert made["steps"][0] == {"action": "gather", "target": "berries", "qty": 2}
     assert backend.calls[0].seed == seed_for(7, "ada", 0)
 
@@ -218,6 +218,30 @@ def test_by_default_a_completed_step_moves_to_the_next_step_without_asking(
         steps += [d for k, d in notes if k == "plan_step"]
     assert [(d["index"], d["status"]) for d in steps[:2]] == [(0, "done"), (1, "done")]
     assert made[:2] == [["idle"], ["idle"]]
+
+
+LONG_REST = json.dumps({"goal": "rest", "steps": [{"action": "rest", "qty": 8}], "reason": "tired"})
+
+
+@pytest.mark.req("REQ-AGT-001")
+def test_a_need_turning_urgent_interrupts_a_long_rest(
+    registry: Registry, make_world: MakeWorld
+) -> None:
+    """AC1: `need` fires again when a relief's level reaches `urgent_at`, not only `act_at`,
+    so an 8-hour rest planned while merely hungry ends once hunger is urgent (a live-run
+    villager rested through critical hunger and starved)."""
+    ada = Villager("ada", "Ada", Coord(2, 2), model="m", needs={"hunger": 80.0})
+    controller, engine, state, _backend = setup(
+        registry, make_world, [LONG_REST, REST], villagers=[ada]
+    )
+    per_hour = 60 // default_config().calendar.tick_minutes
+    made: list[tuple[int, list[str]]] = []
+    for _ in range(3 * per_hour):
+        state, notes = step(controller, engine, state)
+        made += [(state.tick, d["triggers"]) for k, d in notes if k == "plan_made"]
+    assert made[0][1] == ["idle", "need"]
+    assert made[1][1] == ["need"]  # before the rest's 8 hours: hunger 80 → 85 at 4/hour
+    assert made[1][0] - made[0][0] < 2 * per_hour
 
 
 @pytest.mark.req("REQ-AGT-004")
@@ -659,7 +683,7 @@ def test_events_carry_their_full_payloads(registry: Registry, make_world: MakeWo
         ],
         "reason": "hungry",
         "retries": 0,
-        "template": "plan.v1",
+        "template": "plan.v2",
     }
     steps = [d for k, d in notes if k == "plan_step"]
     assert steps[:2] == [
@@ -808,7 +832,7 @@ def test_requests_name_kind_villager_tick_seed_and_template(
     (request,) = seen
     assert (request.kind, request.villager, request.tick, request.model) == ("plan", "ada", 5, "m")
     assert (request.seed, request.output, request.attempt) == (seed_for(7, "ada", 5), Plan, 0)
-    assert request.template == "plan.v1"
+    assert request.template == "plan.v2"
 
 
 def test_decide_without_a_record_uses_the_fallback(
@@ -942,3 +966,11 @@ def test_records_of_dead_villagers_are_dropped_when_none_is_due(
     del state.villagers["bo"]
     state, _ = step(controller, engine, state)
     assert set(controller.to_dict()["minds"]["m"]["records"]) == {"ada"}
+
+
+def test_a_record_saved_before_urgent_tracking_loads_and_round_trips() -> None:
+    """Snapshots from M2b have no `urgent` list: it loads empty; new records keep theirs."""
+    data = Record(above=["eat"], urgent=["eat"]).to_dict()
+    assert Record.from_dict(data).urgent == ["eat"]
+    del data["urgent"]
+    assert Record.from_dict(data).urgent == [] and Record.from_dict(data).above == ["eat"]

@@ -71,7 +71,7 @@ class AgentConfig:
     prompt_budget_tokens: int = 2000
     chars_per_token: float = 4.0
     triggers: tuple[str, ...] = DEFAULT_TRIGGERS
-    plan_template: str = "plan.v1"
+    plan_template: str = "plan.v2"
     steering_phrases: tuple[str, ...] = STEERING
     drawn_traits: int = 0
 

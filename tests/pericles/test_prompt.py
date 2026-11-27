@@ -47,9 +47,8 @@ def prompt(
 ) -> str:
     view = view_of(registry, state, **config)
     villager = state.villagers[vid]
-    system, user = plan_messages(
-        view, villager, situation, catalog_for(view, villager), load_template("plan.v1")
-    )
+    template = load_template(view.config.plan_template)
+    system, user = plan_messages(view, villager, situation, catalog_for(view, villager), template)
     return system.content + "\n" + user.content
 
 
@@ -238,3 +237,37 @@ def test_family_is_perceived_only_when_known(registry: Registry, make_world: Mak
     assert "Cara (cara) has asked you to be partners" in text
     assert "Zed (zed) has asked" not in text
     assert "Bram (bram) has asked" not in text
+
+
+@pytest.mark.req("REQ-AGT-002")
+def test_needs_say_what_relieves_them_and_rest_relieves_nothing(
+    registry: Registry, make_world: MakeWorld
+) -> None:
+    """AC1: each need names the action that relieves it, eating names the level it works
+    from, and `rest` says it relieves no need (a live run rested to cure fatigue and starved)."""
+    state = village(make_world)
+    state.villagers["ada"].needs.update({"fatigue": 30.0, "cold": 10.0})
+    text = prompt(registry, state)
+    assert "- hunger: 90/100 (urgent); eat relieves it, once it is 50 or more" in text
+    assert "- fatigue: 30/100; only sleep relieves it" in text
+    assert "- cold: 10/100; being at home relieves it" in text
+    assert "- rest [hours]: stay where you are; it relieves no need" in text
+
+
+@pytest.mark.req("REQ-AGT-002")
+def test_age_is_a_life_stage_not_calendar_years(registry: Registry, make_world: MakeWorld) -> None:
+    """AC1: identity gives the villager's life stage; a short calendar year made adults read
+    as "6 years old", and the model acted on it."""
+    state = village(make_world)
+    elder_days = default_config().old_age_days
+    state.villagers["bram"].born_tick = -default_config().calendar.ticks_per_day * elder_days
+    state.villagers["zed"].adult = False
+    assert "You are Ada (ada), female, an adult." in prompt(registry, state)
+    assert "You are Bram (bram), male, an elder." in prompt(registry, state, "bram")
+    assert "You are Zed (zed), male, a child." in prompt(registry, state, "zed")
+    assert "years old" not in prompt(registry, state)
+
+
+def test_plan_v2_is_the_default_template_and_v1_still_loads() -> None:
+    assert AgentConfig().plan_template == "plan.v2"
+    assert load_template("plan.v1").version == "plan.v1"

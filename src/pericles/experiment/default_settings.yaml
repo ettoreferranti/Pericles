@@ -78,7 +78,7 @@ agents:
   prompt_budget_tokens: 2000
   chars_per_token: 4.0
   triggers: [idle, step_failed, need, periodic]  # add step_completed to re-ask after every step
-  plan_template: plan.v1
+  plan_template: plan.v2
   steering_phrases:
     - you must obey
     - you must follow the law
