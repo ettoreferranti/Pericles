@@ -30,9 +30,9 @@ Action = Literal[
 ACTIONS: tuple[str, ...] = typing.get_args(Action)
 NO_TARGET = frozenset({"sleep", "rest", "go_home", "move_in"})
 OPTIONAL_TARGET = frozenset({"eat", "store"})
-UNLISTED = frozenset({"store"})  # any carried item; the list would only repeat belongings
+UNLISTED = frozenset({"store"})  # accepts any item id in the packs; listing them all is noise
 USAGE = {
-    "gather": "gather <item> [qty]: collect a raw item from the land nearby",
+    "gather": "gather <item> [qty]: collect a raw item from the land",
     "eat": "eat [food]: eat food you carry, or fetch it from a store you may use",
     "sleep": "sleep: go home if you have one, and sleep until rested",
     "rest": "rest [hours]: stay where you are",
@@ -117,6 +117,11 @@ def catalog_for(view: View, villager: Villager) -> Catalog:
         if tech.id
         not in (state.village_knowledge if tech.scope == "village" else villager.knowledge)
     )
+    # `gather` is content-level (items some node action yields for this villager now: season,
+    # skill and child tags), not limited to perceived nodes: the executor reaches farther than
+    # perception, and a missing node just fails the step so the villager re-plans (ADR-0018 §3).
+    # `store` and `eat` are deliberately lenient and content-level too, so later steps can
+    # store or eat what earlier steps gather.
     targets: dict[str, tuple[str, ...]] = {action: () for action in NO_TARGET}
     targets |= {
         "gather": tuple(gatherable),

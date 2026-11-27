@@ -128,3 +128,47 @@ def test_catalog_lines_skip_actions_without_targets_and_never_list_store_items()
     assert any(line.startswith("- sleep") for line in lines)
     store = next(line for line in lines if line.startswith("- store"))
     assert "targets" not in store
+
+
+@pytest.mark.req("REQ-AGT-003")
+def test_gather_targets_are_content_level_not_perception_limited(
+    registry: Registry, make_world: MakeWorld
+) -> None:
+    """AC2: gather lists items an action can produce for this villager, wherever nodes are."""
+    ada = Villager("ada", "Ada", Coord(1, 1), sex="female")
+    kid = Villager("kid", "Kid", Coord(2, 1), sex="male", adult=False)
+    state = make_world(ROWS, [ada, kid])  # no nodes at all
+    view = view_of(registry, state)
+    adult_targets = catalog_for(view, ada).targets["gather"]
+    assert "wood" in adult_targets and "berries" in adult_targets
+    # A child may only do actions with a child-allowed tag, so the labour items drop out.
+    child_targets = catalog_for(view, kid).targets["gather"]
+    assert "berries" in child_targets
+    assert "wood" not in child_targets and "stone" not in child_targets
+    # Building-located actions (farming) are not gathering from the land.
+    assert "grain" not in adult_targets
+
+
+@pytest.mark.req("REQ-AGT-003")
+def test_store_and_eat_accept_items_nobody_holds(registry: Registry, make_world: MakeWorld) -> None:
+    """AC2: store and eat targets are content-level, so plans can chain gather, store, eat."""
+    ada = Villager("ada", "Ada", Coord(1, 1), sex="female")
+    state = make_world(ROWS, [ada])
+    catalog = catalog_for(view_of(registry, state), ada)
+    assert ada.inventory.count("wood") == 0 and ada.inventory.count("meat") == 0
+    plan = Plan(
+        goal="g",
+        steps=(
+            Step(action="gather", target="berries"),
+            Step(action="store", target="wood"),
+            Step(action="eat", target="meat"),
+        ),
+        reason="r",
+    )
+    assert check_plan(plan, catalog, 6) is None
+
+
+def test_gather_usage_does_not_claim_proximity() -> None:
+    catalog = Catalog({a: () for a in ACTIONS} | {"gather": ("wood",)})
+    gather = next(line for line in catalog.lines() if line.startswith("- gather"))
+    assert "nearby" not in gather
