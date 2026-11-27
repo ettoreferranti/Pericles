@@ -1,0 +1,15 @@
+- kind: plan
+  pattern: "\\(urgent\\)"
+  replies:
+    - '{"goal": "eat", "steps": [{"action": "eat"}, {"action": "gather", "target": "berries", "qty": 4}], "reason": "hungry"}'
+- kind: plan
+  villager: cora
+  replies:
+    - "not json"
+    - '{"goal": "stock up", "steps": [{"action": "gather", "target": "berries", "qty": 6}, {"action": "store", "target": "berries"}], "reason": "winter"}'
+    - '{"goal": "rest", "steps": [{"action": "rest", "qty": 2}], "reason": "tired"}'
+- kind: plan
+  replies:
+    - '{"goal": "a house", "steps": [{"action": "gather", "target": "wood", "qty": 4}, {"action": "build", "target": "house"}], "reason": "shelter"}'
+    - '{"goal": "rest", "steps": [{"action": "rest", "qty": 2}], "reason": "tired"}'
+    - '{"goal": "sleep", "steps": [{"action": "sleep"}], "reason": "night"}'

@@ -1,0 +1,29 @@
+# Golden run for REQ-NFR-001: a small LLM village on the fake backend; its event-log digest is pinned.
+seed: 3
+packs: [base]
+map:
+  width: 24
+  height: 24
+  bands:
+    - {terrain: water, share: 0.12}
+    - {terrain: fertile_soil, share: 0.18}
+    - {terrain: grass, share: 0.35}
+    - {terrain: forest, share: 0.25}
+    - {terrain: rock, share: 0.10}
+  start_terrain: grass
+  start_radius: 6
+population:
+  - {id: ada, name: Ada, sex: female, age_days: 210, model: fake, skills: {foraging: 20.0}, inventory: {berries: 4}}
+  - {id: bram, name: Bram, sex: male, age_days: 260, model: fake, skills: {foraging: 20.0}, inventory: {berries: 4}}
+  - {id: cora, name: Cora, sex: female, age_days: 180, model: fake, skills: {foraging: 20.0}, inventory: {berries: 4}}
+  - {id: dov, name: Dov, sex: male, age_days: 300, model: fake, skills: {foraging: 20.0}, inventory: {berries: 4}}
+llm:
+  backends:
+    f: {kind: fake, replies: plans.yaml}
+  models:
+    fake: {backend: f, name: fake-model}
+  cache: record
+  mode: wait
+run:
+  days: 2
+  snapshot_every_days: 1
