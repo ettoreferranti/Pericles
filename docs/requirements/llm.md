@@ -41,6 +41,6 @@ Must · M2 · Implemented
 - AC1: Every call logs model, prompt hash, tokens in/out, latency, validity, retry count and raw output (compressed).
 
 ### REQ-LLM-009: Backend failure
-Must · M2 · Accepted
+Must · M2 · Implemented
 - AC1: A backend error mid-run, in wait mode, pauses the run and retries with exponential backoff. After `max_backend_failures` the run stops cleanly and can be resumed.
 - AC2: In live mode, the affected villagers use fallback behaviour, and the event is flagged.

@@ -8,7 +8,7 @@ experimenter can change during a run.
 - Requirements: [docs/requirements/](docs/requirements/README.md)
 - Architecture decisions: [docs/adr/](docs/adr/README.md)
 
-Status: M1 Headless sim is done (M1a to M1d), with every M1 requirement Implemented, including REQ-NFR-003 (at least 1000 scripted ticks/s with 150 villagers on a 128×128 map). M2a, the LLM gateway, is done. Next is M2b, LLM plan minds.
+Status: M1 Headless sim is done (M1a to M1d), with every M1 requirement Implemented, including REQ-NFR-003 (at least 1000 scripted ticks/s with 150 villagers on a 128×128 map). M2a, the LLM gateway, is done. M2b, LLM plan minds, is done. Next is M2c: memory, reflection and opinions.
 
 ## Run a village
 
