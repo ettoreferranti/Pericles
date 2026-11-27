@@ -125,7 +125,12 @@ class PlanMind:
         return record.decision
 
     def observe(self, state: WorldState, events: Sequence[Event]) -> None:
-        """Note engine failures; the step they hit is judged on its next run (`_run`)."""
+        """Note engine failures; the step they hit is judged on its next run (`_run`).
+
+        Records of the dead go here too, so a snapshot never carries one (Review Focus 3).
+        """
+        alive = state.villagers
+        self.records = {vid: r for vid, r in self.records.items() if vid in alive}
         for event in events:
             if event.kind not in WATCHED or not failed_event(event):
                 continue
@@ -134,6 +139,7 @@ class PlanMind:
                 continue
             reason = event.data.get("reason", event.kind)
             record.rejected = f"{event.kind}: {reason}"
+            record.progress.issued = False  # what was sent did not happen; it is not done
 
     def take_events(self) -> list[tuple[str, dict[str, Any]]]:
         out, self._events = self._events, []
@@ -302,6 +308,10 @@ class PlanMind:
                     # It ended or failed at once (Review Focus 1). `pending` keeps what the
                     # steps fired (step_failed), so the ask after the window says why.
                     self._fall_back(view, vid, record, "the plan gave nothing to do", flagged=False)
+                else:
+                    # The model already saw this tick; steps settled now must not ask again.
+                    # `failure` stays so a later prompt can still mention it.
+                    record.pending = []
                 continue
             reason, flagged = dropped[vid]
             record.pending = []

@@ -712,3 +712,67 @@ def test_live_mode_backend_errors_fall_back_for_every_villager_in_the_batch(
     state, notes = step(controller, engine, state)
     flagged = [(d["actor"], d["flagged"]) for k, d in notes if k == "mind_fallback"]
     assert flagged == [("ada", True), ("bo", True)]
+
+
+@pytest.mark.req("REQ-AGT-001")
+def test_steps_settled_on_the_adoption_tick_do_not_trigger_a_second_ask(
+    registry: Registry, make_world: MakeWorld
+) -> None:
+    """AC2: a step that fails as the plan is adopted fires nothing more; the plan runs on."""
+    plan = json.dumps(
+        {
+            "goal": "food",
+            "steps": [
+                {"action": "gather", "target": "iron_ore"},
+                {"action": "gather", "target": "berries", "qty": 2},
+            ],
+            "reason": "r",
+        }
+    )
+    controller, engine, state, backend = setup(registry, make_world, [plan])
+    done: list[int] = []
+    for _ in range(200):
+        before = len(backend.calls)
+        state, notes = step(controller, engine, state)
+        done = [d["index"] for k, d in notes if k == "plan_step" and d["status"] == "done"]
+        if done:
+            break
+        assert len(backend.calls) == 1
+    assert done == [1] and before == 1
+
+
+@pytest.mark.req("REQ-AGT-004")
+def test_a_rejected_eat_fails_the_step_with_the_rejection(
+    registry: Registry, make_world: MakeWorld
+) -> None:
+    """AC2: an Eat the engine rejects is a failed step, not one done because it was sent."""
+    plan = json.dumps({"goal": "eat", "steps": [{"action": "eat"}], "reason": "r"})
+    ada = Villager("ada", "Ada", Coord(2, 2), model="m", inventory=Inventory({"berries": 3}))
+    controller, _engine, state, _backend = setup(
+        registry, make_world, [plan, REST], villagers=[ada], triggers=("idle",)
+    )
+    tick(controller, state)
+    controller.events()
+    rejected = Event(state.tick, 0, "intent_rejected", {"actor": "ada", "reason": "not_hungry"})
+    controller.observe(state, [rejected])
+    controller.memory["ada"].idle_until = 0  # the controller idles untargeted failures
+    tick(controller, state)
+    steps = [d for k, d in controller.events() if k == "plan_step"]
+    assert [(d["action"], d["status"]) for d in steps] == [("eat", "failed")]
+    assert "not_hungry" in steps[0]["reason"]
+
+
+def test_records_of_dead_villagers_are_dropped_when_none_is_due(
+    registry: Registry, make_world: MakeWorld
+) -> None:
+    """Review Focus 3: observe prunes the dead, so a snapshot never carries their record."""
+    people = [
+        Villager("ada", "Ada", Coord(2, 2), model="m"),
+        Villager("bo", "Bo", Coord(3, 3), model="m"),
+    ]
+    controller, engine, state, _backend = setup(registry, make_world, [REST], villagers=people)
+    state, _ = step(controller, engine, state)
+    assert controller.memory["ada"].idle_until > state.tick  # resting: nobody is due next tick
+    del state.villagers["bo"]
+    state, _ = step(controller, engine, state)
+    assert set(controller.to_dict()["minds"]["m"]["records"]) == {"ada"}
