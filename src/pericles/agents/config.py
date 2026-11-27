@@ -8,6 +8,8 @@ from dataclasses import dataclass, field
 RELIEFS = ("eat", "sleep", "shelter")
 MAX_LEVEL = 100.0
 TRIGGERS = ("idle", "step_completed", "step_failed", "need", "periodic")  # ADR-0018 §2
+# step_completed is off by default: a finished step moves on to the next step (ADR-0018 §2).
+DEFAULT_TRIGGERS = ("idle", "step_failed", "need", "periodic")
 STEERING = (
     "you must obey",
     "you must follow the law",
@@ -68,7 +70,7 @@ class AgentConfig:
     max_plan_steps: int = 6
     prompt_budget_tokens: int = 2000
     chars_per_token: float = 4.0
-    triggers: tuple[str, ...] = TRIGGERS
+    triggers: tuple[str, ...] = DEFAULT_TRIGGERS
     plan_template: str = "plan.v1"
     steering_phrases: tuple[str, ...] = STEERING
     drawn_traits: int = 0

@@ -3,7 +3,7 @@ from collections.abc import Callable, Sequence
 
 import pytest
 
-from pericles.agents.config import AgentConfig, ticks_for_hours
+from pericles.agents.config import TRIGGERS, AgentConfig, ticks_for_hours
 from pericles.agents.controller import Controller, Planner
 from pericles.agents.executor import Progress, begin
 from pericles.agents.plan import Plan, Step
@@ -178,8 +178,10 @@ def test_periodic_replan_after_replan_hours(registry: Registry, make_world: Make
 def test_completed_plan_fires_step_completed_and_idle(
     registry: Registry, make_world: MakeWorld
 ) -> None:
-    """AC3: finishing the last step fires `idle` (and `step_completed`) for the next plan."""
-    controller, engine, state, _backend = setup(registry, make_world, [REST, REST])
+    """AC3: finishing the last step fires `idle` (and `step_completed`, when enabled)."""
+    controller, engine, state, _backend = setup(
+        registry, make_world, [REST, REST], triggers=TRIGGERS
+    )
     per_hour = 60 // default_config().calendar.tick_minutes
     made: list[list[str]] = []
     steps: list[dict] = []  # type: ignore[type-arg]
@@ -189,6 +191,33 @@ def test_completed_plan_fires_step_completed_and_idle(
         steps += [d for k, d in notes if k == "plan_step"]
     assert made[:2] == [["idle"], ["idle", "step_completed"]]
     assert steps[0]["status"] == "done" and steps[0]["action"] == "rest"
+
+
+TWO_RESTS = json.dumps(
+    {
+        "goal": "rest",
+        "steps": [{"action": "rest", "qty": 1}, {"action": "rest", "qty": 1}],
+        "reason": "tired",
+    }
+)
+
+
+@pytest.mark.req("REQ-AGT-001")
+def test_by_default_a_completed_step_moves_to_the_next_step_without_asking(
+    registry: Registry, make_world: MakeWorld
+) -> None:
+    """AC1: with the default triggers, finishing a step starts the plan's next step; only the
+    finished plan (`idle`) asks again."""
+    controller, engine, state, _backend = setup(registry, make_world, [TWO_RESTS, REST])
+    per_hour = 60 // default_config().calendar.tick_minutes
+    made: list[list[str]] = []
+    steps: list[dict] = []  # type: ignore[type-arg]
+    for _ in range(2 * per_hour + 30):
+        state, notes = step(controller, engine, state)
+        made += [d["triggers"] for k, d in notes if k == "plan_made"]
+        steps += [d for k, d in notes if k == "plan_step"]
+    assert [(d["index"], d["status"]) for d in steps[:2]] == [(0, "done"), (1, "done")]
+    assert made[:2] == [["idle"], ["idle"]]
 
 
 @pytest.mark.req("REQ-AGT-004")
