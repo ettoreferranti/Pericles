@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from pericles.agents.controller import Controller
+from pericles.agents.planmind import plan_minds
 from pericles.agents.scripted import scripted_controller
 from pericles.analysis.metrics import daily_survival
 from pericles.core.engine import Engine
@@ -45,22 +46,37 @@ def _backends(experiment: Experiment) -> dict[str, Backend]:
     return backends
 
 
+def _controller(experiment: Experiment, engine: Engine, gateway: Gateway) -> Controller:
+    """Scripted minds plus one plan mind per model key (ADR-0018 §1)."""
+    minds = plan_minds(
+        experiment.llm.models, gateway.complete_all, experiment.agents, experiment.seed
+    )
+    return scripted_controller(engine.context, experiment.agents, minds)
+
+
 def start(experiment: Experiment, out: Path) -> Session:
     """Build and check everything first, so a run that cannot start leaves no directory."""
     state = build_world(experiment)
     engine = Engine(experiment.registry, experiment.engine)
-    controller = scripted_controller(engine.context, experiment.agents)
     backends = _backends(experiment)
     if experiment.llm.cache == "replay":  # a resumed replay run already holds its copy
         assert experiment.llm.cache_from is not None
         replay_source(Path(experiment.llm.cache_from))
     existed = out.exists()
+    templates = {"plan": experiment.agents.plan_template}
     run_dir = RunDirectory.create(
-        out, experiment.resolved, seed=experiment.seed, extra=run_meta(experiment.llm)
+        out,
+        experiment.resolved,
+        seed=experiment.seed,
+        extra={**run_meta(experiment.llm), "templates": templates},
     )
+    gateway: Gateway | None = None
     try:
         gateway = open_gateway(experiment.llm, backends, run_dir)
+        controller = _controller(experiment, engine, gateway)
     except BaseException:
+        if gateway is not None:
+            gateway.close()
         run_dir.close()
         _remove_created(out, existed)
         raise
@@ -82,16 +98,19 @@ def _remove_created(out: Path, existed: bool) -> None:
 def reopen(out: Path) -> Session:
     """Continue from the last usable snapshot; the run directory is closed if that fails."""
     run_dir = RunDirectory.open(out)
+    gateway: Gateway | None = None
     try:
         experiment = experiment_from_mapping(run_dir.config, run_dir.path)
         engine = Engine(experiment.registry, experiment.engine)
-        controller = scripted_controller(engine.context, experiment.agents)
         backends = _backends(experiment)
-        state, _ = resume(run_dir, controller.load)
         gateway = open_gateway(experiment.llm, backends, run_dir)
+        controller = _controller(experiment, engine, gateway)
+        state, _ = resume(run_dir, controller.load)
         if gateway.calls is not None:
             gateway.calls.truncate_after(state.tick - 1)
     except BaseException:
+        if gateway is not None:
+            gateway.close()
         run_dir.close()
         raise
     return Session(run_dir, experiment, engine, state, controller, gateway)

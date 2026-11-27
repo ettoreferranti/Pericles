@@ -8,7 +8,7 @@ experimenter can change during a run.
 - Requirements: [docs/requirements/](docs/requirements/README.md)
 - Architecture decisions: [docs/adr/](docs/adr/README.md)
 
-Status: M1 Headless sim is done (M1a to M1d), with every M1 requirement Implemented, including REQ-NFR-003 (at least 1000 scripted ticks/s with 150 villagers on a 128×128 map). M2a, the LLM gateway, is done. Next is M2b, LLM plan minds.
+Status: M1 Headless sim is done (M1a to M1d), with every M1 requirement Implemented, including REQ-NFR-003 (at least 1000 scripted ticks/s with 150 villagers on a 128×128 map). M2a, the LLM gateway, is done. M2b, LLM plan minds, is done. Next is M2c: memory, reflection and opinions.
 
 ## Run a village
 
@@ -22,7 +22,9 @@ uv run pytest -m perf                                      # perf test (target m
 
 ### Language models
 
-From M2b, villagers with a `model:` call a model through the gateway (ADR-0017). In M2a the `llm:` section is configured and checked when a run starts (it fails fast if a model is missing), and runs open the response cache and call log, but villagers still use the scripted mind. Configure backends and models in the experiment's `llm:` section:
+Villagers with a `model:` are planned by that model (ADR-0018). When a trigger fires (idle, step done or failed, a need reaching its level, or every `replan_hours`), the villager asks for a short plan of village jobs, which plain code then carries out. Invalid plans are retried with the error, then the scripted mind takes over for `fallback_hours`. Plans, retries and fallbacks appear in `events.sqlite`. `experiments/llm-village.yaml` is a ready example: `uv run pericles run experiments/llm-village.yaml --out runs/llm`.
+
+All calls go through the gateway (ADR-0017), which checks the models when a run starts (it fails fast if a model is missing) and keeps a response cache and call log. Configure backends and models in the experiment's `llm:` section:
 
 ```yaml
 llm:

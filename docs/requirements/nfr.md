@@ -1,7 +1,7 @@
 # NFR: Non-Functional Requirements
 
 ### REQ-NFR-001: Reproducibility
-Must · M2 · Accepted
+Must · M2 · Implemented
 - AC1: Same config, seed, intervention schedule and LLM cache in replay mode → identical event-log hash (golden-run test in CI).
 
 ### REQ-NFR-002: Platform

@@ -21,5 +21,6 @@ Format: Michael Nygard. New ADRs get the next number. Superseded ADRs stay, with
 | [0015](0015-life-and-population.md) | Life and population | Accepted |
 | [0016](0016-agent-layer-and-runs.md) | Agent layer, scripted villagers and running villages | Accepted |
 | [0017](0017-llm-gateway.md) | LLM gateway, backends, cache and call log | Accepted |
+| [0018](0018-plan-minds.md) | Plan minds | Accepted |
 
 Template: copy any ADR and keep the sections Context / Decision / Consequences.

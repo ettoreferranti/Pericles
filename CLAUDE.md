@@ -21,6 +21,7 @@ cd viewer && pnpm test && pnpm typecheck && pnpm lint && pnpm mutation
 - TDD: failing test first. Every test that verifies a requirement carries
   `@pytest.mark.req("REQ-…")` (literal IDs; `pytest.mark.req` spelled out) and names the AC in its docstring.
 - Product tests live in `tests/pericles/` (these run under mutmut). Tooling tests live in `tests/tools/`.
+- The golden replay test lives in `tests/golden/`, beside its data, so mutmut (which runs `tests/pericles/` only) does not re-run it for every mutant. Plain `uv run pytest` and CI still run it.
 - `pericles.core` never imports `agents`, `llm`, `experiment`, `server` or `analysis`. The engine is deterministic: no wall clock, no unseeded randomness.
 - Significant design decisions get an ADR (`docs/adr/`, next number, add to the index). ADRs are amended or superseded, never deleted.
 - Requirement changes follow `docs/requirements/README.md` → "Revising requirements". Mark a milestone done in `milestones.md` only when all its requirements have passing tests.

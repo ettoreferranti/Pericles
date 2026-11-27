@@ -4,10 +4,19 @@ from typing import Any
 
 import pytest
 
+from pericles.agents.config import AgentConfig
+from pericles.agents.executor import Outcome, Progress, advance, begin
+from pericles.agents.plan import Step
+from pericles.agents.view import Memory, NodeIndex, View
+from pericles.core.buildings import Building, Ownership
 from pericles.core.content.registry import Registry, base_pack_path, load_registry
+from pericles.core.context import Context
+from pericles.core.geometry import Coord
+from pericles.core.inventory import Inventory
 from pericles.core.mapgen import Band, MapParams, TileMap, Vein, generate_map
 from pericles.core.nodes import Node
 from pericles.core.state import Villager, WorldState
+from pericles.experiment.defaults import default_config
 
 
 @pytest.fixture(scope="session")
@@ -212,3 +221,58 @@ class FailureLog:
 @pytest.fixture
 def failure_log() -> Callable[[], FailureLog]:
     return FailureLog
+
+
+ROWS = ["." * 16] * 16  # a plain 16x16 grass map
+
+
+@pytest.fixture
+def rows() -> list[str]:
+    return list(ROWS)
+
+
+@pytest.fixture
+def view_of(registry: Registry) -> Callable[..., View]:
+    def build(
+        state: WorldState,
+        memory: Mapping[str, Memory] | None = None,
+        config: AgentConfig | None = None,
+    ) -> View:
+        config = AgentConfig() if config is None else config
+        ctx = Context.build(registry, default_config())
+        index = NodeIndex(state.nodes.values(), config.index_cell)
+        return View(ctx, state, config, index, {} if memory is None else dict(memory))
+
+    return build
+
+
+@pytest.fixture
+def run(view_of: Callable[..., View]) -> Callable[..., tuple[Outcome, Progress]]:
+    def go(
+        state: WorldState,
+        vid: str,
+        step: Step,
+        p: Progress | None = None,
+        memory: Mapping[str, Memory] | None = None,
+        config: AgentConfig | None = None,
+    ) -> tuple[Outcome, Progress]:
+        villager = state.villagers[vid]
+        progress = p if p is not None else begin(state.tick, villager, step)
+        return advance(view_of(state, memory, config), villager, step, progress), progress
+
+    return go
+
+
+@pytest.fixture
+def store() -> Callable[..., Building]:
+    def build(bid: str, at: Coord, items: dict[str, int] | None = None) -> Building:
+        return Building(
+            bid,
+            "storehouse",
+            at,
+            Ownership("communal"),
+            complete=True,
+            storage=Inventory(dict(items or {})),
+        )
+
+    return build

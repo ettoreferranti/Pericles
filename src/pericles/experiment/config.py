@@ -20,6 +20,7 @@ from pydantic import (
 )
 
 from pericles.agents.config import AgentConfig
+from pericles.agents.prompt import TemplateError, load_template
 from pericles.core.config import EngineConfig
 from pericles.core.content.loader import ContentError, read_yaml
 from pericles.core.content.registry import Registry, base_pack_path, load_registry
@@ -38,6 +39,7 @@ from pericles.experiment.settings import (
     llm_config_to_mapping,
     values_for,
 )
+from pericles.experiment.traits import draw_traits
 from pericles.llm.config import LLMConfig
 
 SECTIONS = ("seed", "packs", "map", "population", "run", "engine", "agents", "llm")
@@ -59,7 +61,7 @@ class VillagerSpec(_Spec):
     name: Annotated[StrictStr, Field(min_length=1)]
     sex: StrictStr | None = None
     age_days: Annotated[StrictInt, Field(ge=0)]
-    traits: tuple[StrictStr, ...] = ()
+    traits: tuple[StrictStr, ...] | None = None
     skills: dict[StrictStr, Annotated[StrictFloat | StrictInt, Field(ge=0)]] = Field(
         default_factory=dict
     )
@@ -189,6 +191,10 @@ def _check_agents(agents: AgentConfig, registry: Registry) -> None:
             raise ExperimentError(f"agents.{name}: unknown building {kind!r}")
         if not getattr(registry.buildings[kind], attribute):
             raise ExperimentError(f"agents.{name}: {kind!r} has no {attribute}")
+    try:
+        load_template(agents.plan_template)
+    except TemplateError as error:
+        raise ExperimentError(f"agents.plan_template: {error}") from None
 
 
 def _skills(registry: Registry) -> set[str]:
@@ -212,7 +218,7 @@ def _population(data: object, registry: Registry, engine: EngineConfig) -> tuple
             raise ExperimentError(f"{where}.id: duplicate id {spec.id!r}")
         if spec.sex is not None and spec.sex not in engine.sexes:
             raise ExperimentError(f"{where}.sex: must be one of {engine.sexes}")
-        for j, trait in enumerate(spec.traits):
+        for j, trait in enumerate(spec.traits or ()):
             if trait not in registry.traits:
                 raise ExperimentError(f"{where}.traits[{j}]: unknown trait {trait!r}")
         for skill in sorted(spec.skills):
@@ -289,6 +295,12 @@ def experiment_from_mapping(raw: object, base_dir: Path) -> Experiment:
         population = _population(raw["population"], registry, engine)
         _check_models(population, engine, llm)
         population = assign_models(population, engine.adult_age_days, llm.assign, seed)
+        try:
+            population = tuple(
+                draw_traits(population, sorted(registry.traits), agents.drawn_traits, seed)
+            )
+        except ValueError as error:
+            raise ExperimentError(f"agents.{error}") from None
         run: RunSpec = _pydantic(RunSpec, raw["run"], "run")
     except SettingsError as error:
         raise ExperimentError(str(error)) from None
@@ -338,7 +350,7 @@ def build_world(experiment: Experiment) -> WorldState:
             spots[i % len(spots)],
             skills={k: float(v) for k, v in spec.skills.items()},
             knowledge=set(spec.knowledge),
-            traits=spec.traits,
+            traits=spec.traits or (),
             sex=spec.sex,
             born_tick=-spec.age_days * ticks,
             adult=adult,
