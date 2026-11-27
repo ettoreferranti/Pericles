@@ -154,7 +154,10 @@ AGENTS = Path(pericles.agents.__file__).parent
 AGENT_FORBIDDEN_MODULES = ("random", "time", "datetime", "uuid", "secrets")
 AGENT_FORBIDDEN_PACKAGES = ("pericles.experiment", "pericles.server", "pericles.analysis")
 # Numeric literals other than 0 and 1 that agents may contain: (file, scope, value) → why.
-AGENT_ALLOWED_NUMBERS: dict[tuple[str, str, float], str] = {}
+AGENT_ALLOWED_NUMBERS: dict[tuple[str, str, float], str] = {
+    ("prompt.py", "<module>", rank): "prompt section rank, an ordering and not a parameter"
+    for rank in (2, 3, 4, 5, 99)
+}
 AGENT_PARAMETER_MODULES = {"config.py"}
 
 
